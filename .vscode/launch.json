@@ -1,25 +1,39 @@
 {
-  // IntelliSense を使用して利用可能な属性を学べます。
-  // 既存の属性の説明をホバーして表示します。
-  // 詳細情報は次を確認してください: https://go.microsoft.com/fwlink/?linkid=830387
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "MD2PDF",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/src/main.py",
-      "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/src"},
-      "args": ["root_src", "Seminar34_New/生成AI-座学-NoCode", "root_dest", "Seminar34_New/生成AI-座学-NoCode/publish"]
-    },
-    {
-      "name": "Python デバッガー: 現在のファイル",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${file}",
-      "console": "integratedTerminal"
-    }
-  ]
+    // IntelliSense を使用して利用可能な属性を学べます。
+    // 既存の属性の説明をホバーして表示します。
+    // 詳細情報は次を確認してください: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "MD2PDF",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/src"
+            },
+            "args": [
+                "root_src",
+                "Seminar34_New/生成AI-座学-NoCode",
+                "root_dest",
+                "Seminar34_New/生成AI-座学-NoCode/publish"
+            ]
+        },
+        {
+            "name": "Python デバッガー: 現在のファイル",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
 }
