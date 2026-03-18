@@ -1,6 +1,6 @@
 # Markdown to PDF Converter
 
-MarkdownファイルをPDFに自動変換するフォルダ監視ソフトウェアです。
+フォルダ監視し、監視下のMarkdownファイルに更新があれば、PDFに自動変換するソフトウェアです。変換は、デフォルトはpandoc。今後はmarp,slidevで変換できるようにしたい
 
 ## 機能
 
@@ -13,6 +13,7 @@ MarkdownファイルをPDFに自動変換するフォルダ監視ソフトウェ
 ## 必要な環境
 
 ### Python依存関係
+
 ```bash
 pip install -r requirements.txt
 ```
