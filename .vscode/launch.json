@@ -5,6 +5,26 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "監視開始[JS入門]",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/md2pdf.py",
+            "python": "/Users/hirots-m/.venvs/lab313/bin/python",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/src"
+            },
+            "args": [
+                "--watch",
+                "${workspaceFolder:『EduMaterial』}/javascript入門/_manuscript_js入門",
+                "--output",
+                "${workspaceFolder:『EduMaterial』}/javascript入門/_publish_js入門",
+                "--header",
+                "${workspaceFolder:『md2pdf.PY』}/src/header.tex"
+            ]
+        },
+        {
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
@@ -15,7 +35,7 @@
             "name": "MD2PDF",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/main.py",
+            "program": "${workspaceFolder}/src/md2pdf.py",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "env": {
