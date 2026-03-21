@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
- 目的: markdownファイルをpdfへ変換するソフト
+ 目的: markdownファイルをPDFまたはHTMLへ変換するソフト
  概略:
 1. 指定されたフォルダを監視して、markdownファイル(.md)ファイルが更新されたら、pdfへ変換する
 2. 変換されたPDFは、root_src PATHと同様のroot_destパスへコピーする
 3. .mdファイルは中身を確認し、marp用であったらmarp-cliで変換し、
-   slidev用であったらslidevで変換し、それ以外であればpandocでpdfへ変換する。
+   slidev用であったらslidevで変換し、それ以外であればpandocで指定形式へ変換する。
 
 条件:
 - 本プログラムを開始したら、root_srcフォルダ内の下記通り探索する。
@@ -27,6 +27,7 @@ import time
 import shutil
 import subprocess
 import argparse
+import tempfile
 from pathlib import Path
 from typing import Protocol
 from loguru import logger
@@ -53,6 +54,13 @@ class CommonInterface(ABC):
 
 
 DEFAULT_LOG_LEVEL = "DEBUG"
+DEFAULT_OUTPUT_FORMAT = "pdf"
+DEFAULT_INPUT_EXTENSIONS: list[str] = [".md"]
+OUTPUT_EXTENSIONS: dict[str, str] = {
+    "pdf": ".pdf",
+    "html": ".html",
+}
+SUPPORTED_INPUT_EXTENSIONS: set[str] = {".md", ".html"}
 
 PANDOC_TEXT_REPLACEMENTS: dict[int, str] = {
     ord("\uFE0F"): "",        # Variation Selector-16: emoji presentation
@@ -99,13 +107,17 @@ REPO_ROOT = SCRIPT_DIR.parent
 # pandoc 設定（md2pdf/md2pdf.py に準拠）
 PANDOC: str = "/opt/homebrew/bin/pandoc"
 DEFAULT_HEADER_TEX: str = str(REPO_ROOT / "md2pdf.sh" / "japanese.tex")
-BASE_PANDOC_ARGS: list[str] = [
+BASE_PANDOC_PDF_ARGS: list[str] = [
     "-t", "pdf",
     "--pdf-engine=lualatex",
     "-V", "mainfont=Hiragino Kaku Gothic ProN",
     "-V", "sansfont=Hiragino Kaku Gothic ProN",
     "-V", "monofont=Hiragino Kaku Gothic ProN",
     "--verbose"
+]
+DEFAULT_CHROME_CANDIDATES: list[Path] = [
+    Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
 ]
 
 # marp-cli バンドルバイナリ
@@ -129,24 +141,36 @@ MARP_BIN: Path = _get_marp_binary()
 class MarkdownConverter:
     root_src: Path
     root_dest: Path
+    input_extensions: list[str]
     copy_extensions: list[str]
     header_files: list[str]
+    marp_header_files: list[str]
     marp_available: bool
     slidev_available: bool
+    output_format: str
 
     def __init__(self, root_src: str, root_dest: str,
+                 input_extensions: list[str] | None = None,
                  copy_extensions: list[str] | None = None,
-                 header_files: list[str] | None = None) -> None:
+                 header_files: list[str] | None = None,
+                 marp_header_files: list[str] | None = None,
+                 output_format: str = DEFAULT_OUTPUT_FORMAT) -> None:
         self.root_src = Path(root_src)
         self.root_dest = Path(root_dest)
+        self.input_extensions = normalize_input_extensions(input_extensions)
         self.copy_extensions = copy_extensions or ['.png', '.jpg', '.jpeg', '.gif', '.svg']
         self.header_files = header_files or [DEFAULT_HEADER_TEX]
+        self.marp_header_files = marp_header_files or []
+        self.output_format = normalize_output_format(output_format)
         logger.debug(
-            "Initializing MarkdownConverter: root_src={}, root_dest={}, copy_extensions={}, header_files={}",
+            "Initializing MarkdownConverter: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}",
             self.root_src,
             self.root_dest,
+            self.input_extensions,
             self.copy_extensions,
             self.header_files,
+            self.marp_header_files,
+            self.output_format,
         )
         self.marp_available = self._check_marp()
         self.slidev_available = self._check_slidev()
@@ -194,6 +218,21 @@ class MarkdownConverter:
         logger.warning("slidev not found. Slidev conversion unavailable.")
         return False
 
+    def _find_chrome_binary(self) -> str | None:
+        for candidate in DEFAULT_CHROME_CANDIDATES:
+            if candidate.exists():
+                logger.debug("Using Chrome/Chromium binary: {}", candidate)
+                return str(candidate)
+
+        for name in ["google-chrome", "chromium", "chromium-browser"]:
+            found = shutil.which(name)
+            if found:
+                logger.debug("Using Chrome/Chromium from PATH: {}", found)
+                return found
+
+        logger.warning("Chrome/Chromium not found. HTML to PDF conversion is unavailable.")
+        return None
+
     # -------------------------------------------------------
     # ファイル種別判定
     # -------------------------------------------------------
@@ -235,14 +274,96 @@ class MarkdownConverter:
     # -------------------------------------------------------
     # 変換処理
     # -------------------------------------------------------
-    def convert_with_marp(self, md_file: Path, pdf_file: Path) -> bool:
-        """バンドルされた marp-cli でPDFに変換"""
+    def _normalize_marp_header_fragment(self, text: str) -> str:
+        """Marp に挿入する frontmatter 断片を正規化する。"""
+        stripped = text.lstrip('\ufeff').strip()
+        if not stripped:
+            return ''
+
+        lines = stripped.splitlines()
+        if len(lines) >= 2 and lines[0].strip() == '---':
+            for idx in range(1, len(lines)):
+                if lines[idx].strip() in {'---', '...'}:
+                    stripped = '\n'.join(lines[1:idx]).strip()
+                    break
+        return stripped
+
+    def _load_marp_header_text(self) -> str:
+        fragments: list[str] = []
+        for header_file in self.marp_header_files:
+            header_path = Path(header_file)
+            try:
+                fragment = self._normalize_marp_header_fragment(
+                    header_path.read_text(encoding='utf-8')
+                )
+            except Exception as exc:
+                logger.error("Error reading marp header file {}: {}", header_path, exc)
+                continue
+            if fragment:
+                fragments.append(fragment)
+        combined = '\n'.join(fragments).strip()
+        logger.debug("Loaded marp header fragments from {} file(s)", len(fragments))
+        return combined
+
+    def _inject_marp_header(self, markdown_text: str, header_text: str) -> str:
+        if not header_text.strip():
+            return markdown_text
+
+        lines = markdown_text.splitlines(keepends=True)
+        if lines and lines[0].strip() == '---':
+            return ''.join([lines[0], f"{header_text.rstrip()}\n", *lines[1:]])
+
+        stripped_body = markdown_text.lstrip('\ufeff')
+        return f"---\n{header_text.rstrip()}\n---\n\n{stripped_body}"
+
+    def _prepare_marp_source(self, md_file: Path) -> tuple[Path, Path | None]:
+        """Marp 用に必要なら先頭ヘッダーを注入した一時 Markdown を作る。"""
+        header_text = self._load_marp_header_text()
+        if not header_text:
+            return md_file, None
+
+        markdown_text = md_file.read_text(encoding='utf-8')
+        merged_text = self._inject_marp_header(markdown_text, header_text)
+        if merged_text == markdown_text:
+            return md_file, None
+
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            encoding='utf-8',
+            suffix='.md',
+            prefix=f"{md_file.stem}.marp.",
+            dir=str(md_file.parent),
+            delete=False,
+        ) as tmp_file:
+            tmp_file.write(merged_text)
+            tmp_path = Path(tmp_file.name)
+
+        logger.debug("Prepared temporary marp source: {}", tmp_path)
+        return tmp_path, tmp_path
+
+    def convert_with_marp(self, md_file: Path, output_file: Path) -> bool:
+        """バンドルされた marp-cli で指定形式に変換"""
+        temp_md_file: Path | None = None
         try:
-            cmd = [str(MARP_BIN), '--pdf', str(md_file), '-o', str(pdf_file)]
-            logger.debug("Running marp command: {}", cmd)
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            marp_input, temp_md_file = self._prepare_marp_source(md_file)
+            cmd = [str(MARP_BIN)]
+            if self.output_format == 'pdf':
+                cmd.append('--pdf')
+            cmd.extend([
+                '--allow-local-files',
+                str(marp_input.name if marp_input.parent == md_file.parent else marp_input),
+                '-o',
+                str(output_file),
+            ])
+            logger.debug("Running marp command: {} (cwd={})", cmd, md_file.parent)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(md_file.parent),
+            )
             if result.returncode == 0:
-                logger.info(f"[marp] {md_file} -> {pdf_file}")
+                logger.info(f"[marp] {md_file} -> {output_file}")
                 return True
             else:
                 logger.error(f"Marp conversion failed: {result.stderr}")
@@ -250,21 +371,35 @@ class MarkdownConverter:
         except Exception as e:
             logger.error(f"Error during marp conversion: {e}")
             return False
+        finally:
+            if temp_md_file and temp_md_file.exists():
+                try:
+                    temp_md_file.unlink()
+                    logger.debug("Removed temporary marp source: {}", temp_md_file)
+                except Exception as exc:
+                    logger.warning("Could not remove temporary marp source {}: {}", temp_md_file, exc)
 
-    def convert_with_slidev(self, md_file: Path, pdf_file: Path) -> bool:
-        """slidev でPDFに変換"""
+    def convert_with_slidev(self, md_file: Path, output_file: Path) -> bool:
+        """slidev でPDFに変換。HTML指定時は pandoc にフォールバックする。"""
+        if self.output_format != 'pdf':
+            logger.warning(
+                "slidev markdown HTML export is not directly supported; falling back to pandoc: {}",
+                md_file,
+            )
+            return self.convert_with_pandoc(md_file, output_file)
+
         try:
             # slidev export はカレントディレクトリを基準に動作するため cd する
             if shutil.which('slidev'):
-                cmd = ['slidev', 'export', str(md_file), '--format', 'pdf', '--output', str(pdf_file)]
+                cmd = ['slidev', 'export', str(md_file), '--format', 'pdf', '--output', str(output_file)]
             else:
                 cmd = ['npx', '@slidev/cli', 'export', str(md_file),
-                       '--format', 'pdf', '--output', str(pdf_file)]
+                       '--format', 'pdf', '--output', str(output_file)]
             logger.debug("Running slidev command: {} (cwd={})", cmd, md_file.parent)
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     cwd=str(md_file.parent))
             if result.returncode == 0:
-                logger.info(f"[slidev] {md_file} -> {pdf_file}")
+                logger.info(f"[slidev] {md_file} -> {output_file}")
                 return True
             else:
                 logger.error(f"Slidev conversion failed: {result.stderr}")
@@ -273,30 +408,41 @@ class MarkdownConverter:
             logger.error(f"Error during slidev conversion: {e}")
             return False
 
-    def convert_with_pandoc(self, md_file: Path, pdf_file: Path) -> bool:
-        """pandoc (lualatex) でPDFに変換（emoji を含む入力でも落ちにくくする）"""
+    def convert_with_pandoc(self, md_file: Path, output_file: Path) -> bool:
+        """pandoc で指定形式に変換する。PDFは emoji を含んでも落ちにくくする。"""
         try:
             markdown_text = md_file.read_text(encoding='utf-8')
-            sanitized_text, was_sanitized = sanitize_markdown_for_pandoc(markdown_text)
+            markdown_input = markdown_text
+            cmd = [PANDOC, '-']
 
-            cmd = [PANDOC, '-'] + BASE_PANDOC_ARGS + [
-                '--no-highlight',
-                '--resource-path', str(md_file.parent),
-            ]
-            for header_file in self.header_files:
-                cmd.extend(['-H', header_file])
-            cmd.extend(['-o', str(pdf_file)])
+            if self.output_format == 'pdf':
+                sanitized_text, was_sanitized = sanitize_markdown_for_pandoc(markdown_text)
+                markdown_input = sanitized_text
+                cmd.extend(BASE_PANDOC_PDF_ARGS)
+                cmd.extend([
+                    '--no-highlight',
+                    '--resource-path', str(md_file.parent),
+                ])
+                for header_file in self.header_files:
+                    cmd.extend(['-H', header_file])
+                if was_sanitized:
+                    logger.warning(
+                        'Replaced problematic Unicode emoji sequences before pandoc conversion: {}',
+                        md_file,
+                    )
+            else:
+                cmd.extend([
+                    '-t', 'html5',
+                    '--standalone',
+                    '--resource-path', str(md_file.parent),
+                ])
 
-            if was_sanitized:
-                logger.warning(
-                    'Replaced problematic Unicode emoji sequences before pandoc conversion: {}',
-                    md_file,
-                )
+            cmd.extend(['-o', str(output_file)])
 
             logger.debug("Running pandoc command: {}", cmd)
             result = subprocess.run(
                 cmd,
-                input=sanitized_text,
+                input=markdown_input,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
@@ -307,7 +453,7 @@ class MarkdownConverter:
             if result.stderr:
                 print(result.stderr, end='', file=sys.stderr)
             if result.returncode == 0:
-                logger.info(f"[pandoc] {md_file} -> {pdf_file}")
+                logger.info(f"[pandoc] {md_file} -> {output_file}")
                 return True
             else:
                 logger.error(f"Pandoc conversion failed (exit {result.returncode})")
@@ -316,22 +462,83 @@ class MarkdownConverter:
             logger.error(f"Error during pandoc conversion: {e}")
             return False
 
-    def convert_file_to_path(self, md_file: Path, pdf_file: Path) -> bool:
-        """変換ツールを自動選択して指定パスへPDFに変換（marp > slidev > pandoc）"""
-        self.ensure_dest_dir(pdf_file)
-        logger.debug("Converting file {} -> {}", md_file, pdf_file)
+    def convert_html_with_pandoc(self, html_file: Path, output_file: Path) -> bool:
+        """HTML は Chrome/Chromium の headless print で PDF に変換する。"""
+        if self.output_format != 'pdf':
+            logger.error("HTML input only supports PDF output: {}", html_file)
+            return False
 
-        if self.marp_available and self.is_marp_file(md_file):
-            return self.convert_with_marp(md_file, pdf_file)
-        elif self.slidev_available and self.is_slidev_file(md_file):
-            return self.convert_with_slidev(md_file, pdf_file)
-        else:
-            return self.convert_with_pandoc(md_file, pdf_file)
+        try:
+            chrome_path = self._find_chrome_binary()
+            if not chrome_path:
+                logger.error("HTML to PDF requires Chrome or Chromium: {}", html_file)
+                return False
+
+            html_uri = html_file.resolve().as_uri()
+            with tempfile.TemporaryDirectory(prefix='md2pdf-html-') as user_data_dir:
+                cmd = [
+                    chrome_path,
+                    "--headless",
+                    "--disable-gpu",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    f"--user-data-dir={user_data_dir}",
+                    "--allow-file-access-from-files",
+                    "--enable-local-file-accesses",
+                    "--print-to-pdf-no-header",
+                    f"--print-to-pdf={output_file}",
+                    html_uri,
+                ]
+
+                logger.debug("Running Chrome/Chromium for HTML input: {}", cmd)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    cwd=str(html_file.parent),
+                )
+            if result.stdout:
+                print(result.stdout, end='')
+            if result.stderr:
+                print(result.stderr, end='', file=sys.stderr)
+            if result.returncode == 0:
+                logger.info(f"[html-pdf] {html_file} -> {output_file}")
+                return True
+
+            logger.error(f"HTML to PDF conversion failed (exit {result.returncode})")
+            return False
+        except Exception as e:
+            logger.error(f"Error during HTML conversion: {e}")
+            return False
+
+    def convert_file_to_path(self, src_file: Path, output_file: Path) -> bool:
+        """入力種別に応じて変換ツールを自動選択して指定パスへ変換する。"""
+        self.ensure_dest_dir(output_file)
+        logger.debug("Converting file {} -> {}", src_file, output_file)
+
+        if src_file.suffix == '.html':
+            return self.convert_html_with_pandoc(src_file, output_file)
+
+        if self.marp_available and self.is_marp_file(src_file):
+            return self.convert_with_marp(src_file, output_file)
+        if self.slidev_available and self.is_slidev_file(src_file):
+            return self.convert_with_slidev(src_file, output_file)
+        return self.convert_with_pandoc(src_file, output_file)
+
+    def get_output_extension(self) -> str:
+        extension = OUTPUT_EXTENSIONS[self.output_format]
+        logger.debug("Resolved output extension for format {}: {}", self.output_format, extension)
+        return extension
+
+    def convert_markdown(self, md_file: Path) -> bool:
+        """変換ツールを自動選択して指定形式に変換（marp > slidev > pandoc）"""
+        output_file = self.get_dest_path(md_file, self.get_output_extension())
+        return self.convert_file_to_path(md_file, output_file)
 
     def convert_markdown_to_pdf(self, md_file: Path) -> bool:
-        """変換ツールを自動選択してPDFに変換（marp > slidev > pandoc）"""
-        pdf_file = self.get_dest_path(md_file, '.pdf')
-        return self.convert_file_to_path(md_file, pdf_file)
+        """後方互換用。現在の output_format に従って変換する。"""
+        return self.convert_markdown(md_file)
 
     # -------------------------------------------------------
     # パス・ディレクトリ操作
@@ -378,21 +585,21 @@ class MarkdownConverter:
             logger.error(f"Error copying file {src_file}: {e}")
             return False
 
-    def should_convert(self, md_file: Path) -> bool:
+    def should_convert(self, src_file: Path) -> bool:
         """変換が必要かどうか判定（タイムスタンプ比較）"""
-        pdf_file = self.get_dest_path(md_file, '.pdf')
-        if not pdf_file.exists():
-            logger.debug("Destination PDF does not exist yet, converting: {}", pdf_file)
+        output_file = self.get_dest_path(src_file, self.get_output_extension())
+        if not output_file.exists():
+            logger.debug("Destination output does not exist yet, converting: {}", output_file)
             return True
         try:
-            md_mtime = md_file.stat().st_mtime
-            pdf_mtime = pdf_file.stat().st_mtime
-            should_rebuild = (md_mtime - pdf_mtime) > 10
+            md_mtime = src_file.stat().st_mtime
+            output_mtime = output_file.stat().st_mtime
+            should_rebuild = (md_mtime - output_mtime) > 10
             logger.debug(
-                "Timestamp comparison for {}: md_mtime={}, pdf_mtime={}, should_convert={}",
-                md_file,
+                "Timestamp comparison for {}: src_mtime={}, output_mtime={}, should_convert={}",
+                src_file,
                 md_mtime,
-                pdf_mtime,
+                output_mtime,
                 should_rebuild,
             )
             return should_rebuild
@@ -404,11 +611,11 @@ class MarkdownConverter:
         """ファイルを処理"""
         p = Path(file_path)
         logger.debug("Processing filesystem path: {}", p)
-        if p.suffix == '.md':
+        if p.suffix in self.input_extensions:
             if self.should_convert(p):
-                _ = self.convert_markdown_to_pdf(p)
+                _ = self.convert_file_to_path(p, self.get_dest_path(p, self.get_output_extension()))
             else:
-                logger.debug("Skipping markdown because PDF is up-to-date: {}", p)
+                logger.debug("Skipping source file because output is up-to-date: {}", p)
         elif p.suffix in self.copy_extensions:
             _ = self.copy_file(p)
         else:
@@ -442,21 +649,55 @@ class MarkdownFileHandler(FileSystemEventHandler):
             self.converter.process_file(event.src_path)
 
 
-def resolve_header_files(header_files: list[str]) -> list[str]:
+def resolve_pandoc_header_files(header_files: list[str]) -> list[str]:
     resolved = header_files or [DEFAULT_HEADER_TEX]
-    logger.debug("Resolved header files: {}", resolved)
+    logger.debug("Resolved pandoc header files: {}", resolved)
     return resolved
 
 
-def resolve_single_output_path(input_path: Path, output_arg: str | None) -> Path:
+def resolve_marp_header_files(header_files: list[str] | None) -> list[str]:
+    resolved = header_files or []
+    logger.debug("Resolved marp header files: {}", resolved)
+    return resolved
+
+
+def normalize_output_format(output_format: str) -> str:
+    normalized = output_format.lower()
+    if normalized not in OUTPUT_EXTENSIONS:
+        supported = ', '.join(sorted(OUTPUT_EXTENSIONS))
+        raise ValueError(f"Unsupported output format: {output_format}. Supported formats: {supported}")
+    return normalized
+
+
+def normalize_input_extensions(input_extensions: list[str] | None) -> list[str]:
+    normalized = input_extensions or DEFAULT_INPUT_EXTENSIONS
+    resolved: list[str] = []
+    for extension in normalized:
+        ext = extension.strip().lower()
+        if not ext:
+            continue
+        if not ext.startswith('.'):
+            ext = f'.{ext}'
+        if ext not in SUPPORTED_INPUT_EXTENSIONS:
+            supported = ', '.join(sorted(SUPPORTED_INPUT_EXTENSIONS))
+            raise ValueError(f"Unsupported input format: {extension}. Supported formats: {supported}")
+        if ext not in resolved:
+            resolved.append(ext)
+    if not resolved:
+        raise ValueError("At least one input format must be specified")
+    return resolved
+
+
+def resolve_single_output_path(input_path: Path, output_arg: str | None, output_format: str) -> Path:
+    extension = OUTPUT_EXTENSIONS[normalize_output_format(output_format)]
     if not output_arg:
-        output_path = input_path.with_suffix('.pdf')
+        output_path = input_path.with_suffix(extension)
         logger.debug("Using default single-file output path: {}", output_path)
         return output_path
 
     output_path = Path(output_arg)
     if output_path.exists() and output_path.is_dir():
-        resolved = output_path / f"{input_path.stem}.pdf"
+        resolved = output_path / f"{input_path.stem}{extension}"
         logger.debug("Resolved directory output path for single file: {}", resolved)
         return resolved
     logger.debug("Resolved explicit single-file output path: {}", output_path)
@@ -464,33 +705,44 @@ def resolve_single_output_path(input_path: Path, output_arg: str | None) -> Path
 
 
 def run_single_file_mode(input_path: Path, output_arg: str | None,
-                         copy_extensions: list[str], header_files: list[str]) -> int:
+                         input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
+                         marp_header_files: list[str], output_format: str) -> int:
     logger.debug(
-        "Running single file mode: input_path={}, output_arg={}, copy_extensions={}, header_files={}",
+        "Running single file mode: input_path={}, output_arg={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}",
         input_path,
         output_arg,
+        input_extensions,
         copy_extensions,
         header_files,
+        marp_header_files,
+        output_format,
     )
-    output_path = resolve_single_output_path(input_path, output_arg)
+    output_path = resolve_single_output_path(input_path, output_arg, output_format)
     converter = MarkdownConverter(
         str(input_path.parent),
         str(output_path.parent),
+        input_extensions=input_extensions,
         copy_extensions=copy_extensions,
         header_files=header_files,
+        marp_header_files=marp_header_files,
+        output_format=output_format,
     )
     succeeded = converter.convert_file_to_path(input_path, output_path)
     return 0 if succeeded else 1
 
 
 def run_watch_mode(root_src: Path, root_dest: Path,
-                   copy_extensions: list[str], header_files: list[str]) -> int:
+                   input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
+                   marp_header_files: list[str], output_format: str) -> int:
     logger.debug(
-        "Running watch mode: root_src={}, root_dest={}, copy_extensions={}, header_files={}",
+        "Running watch mode: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}",
         root_src,
         root_dest,
+        input_extensions,
         copy_extensions,
         header_files,
+        marp_header_files,
+        output_format,
     )
     if not root_src.exists():
         logger.error(f"Source folder does not exist: {root_src}")
@@ -502,8 +754,11 @@ def run_watch_mode(root_src: Path, root_dest: Path,
     converter = MarkdownConverter(
         str(root_src),
         str(root_dest),
+        input_extensions=input_extensions,
         copy_extensions=copy_extensions,
         header_files=header_files,
+        marp_header_files=marp_header_files,
+        output_format=output_format,
     )
 
     converter.replicate_folder_structure()
@@ -533,17 +788,25 @@ def run_watch_mode(root_src: Path, root_dest: Path,
 # -------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description='Markdown to PDF converter with folder monitoring (pandoc / marp / slidev)')
+        description='Markdown/HTML converter with folder monitoring (pandoc / marp / slidev)')
     _ = parser.add_argument('target', nargs='?',
-                            help='Markdown file to convert, or folder to monitor')
+                            help='Source file to convert, or folder to monitor')
     _ = parser.add_argument('legacy_output', nargs='?',
                             help='Destination folder for legacy root_src root_dest usage')
     _ = parser.add_argument('--watch', nargs='?', const='.',
-                            help='Watch a folder and convert changed Markdown files')
+                            help='Watch a folder and convert changed source files')
     _ = parser.add_argument('--output',
-                            help='Output PDF path for a single file, or destination folder for watch mode')
+                            help='Output file path for a single file, or destination folder for watch mode')
+    _ = parser.add_argument('--format-input', '--format_input', nargs='+',
+                            default=DEFAULT_INPUT_EXTENSIONS,
+                            help='Input file extensions to convert (default: .md). Supports: .md .html')
     _ = parser.add_argument('--header', '-H', action='append', default=[],
                             help='Header TeX file to pass to pandoc (repeatable)')
+    _ = parser.add_argument('--marp-header', action='append', default=[],
+                            help='Markdown/YAML fragment file to inject into Marp frontmatter (repeatable)')
+    _ = parser.add_argument('--format', choices=sorted(OUTPUT_EXTENSIONS),
+                            default=DEFAULT_OUTPUT_FORMAT,
+                            help=f'Output format (default: {DEFAULT_OUTPUT_FORMAT})')
     _ = parser.add_argument('--log-level', default=DEFAULT_LOG_LEVEL,
                             help=f'Loguru log level (default: {DEFAULT_LOG_LEVEL})')
     _ = parser.add_argument('--copy-extensions', nargs='+',
@@ -555,7 +818,10 @@ def main() -> None:
     logger.debug("CLI arguments: {}", args)
 
     copy_extensions: list[str] = args.copy_extensions
-    header_files = resolve_header_files(args.header)
+    input_extensions = normalize_input_extensions(args.format_input)
+    header_files = resolve_pandoc_header_files(args.header)
+    marp_header_files = resolve_marp_header_files(args.marp_header)
+    output_format = normalize_output_format(args.format)
 
     if args.watch is not None:
         watch_target = args.watch
@@ -563,17 +829,41 @@ def main() -> None:
             watch_target = args.target
         root_src = Path(watch_target).resolve()
         root_dest = Path(args.output).resolve() if args.output else root_src
-        sys.exit(run_watch_mode(root_src, root_dest, copy_extensions, header_files))
+        sys.exit(run_watch_mode(
+            root_src,
+            root_dest,
+            input_extensions,
+            copy_extensions,
+            header_files,
+            marp_header_files,
+            output_format,
+        ))
 
     if args.target and args.legacy_output and not args.output:
         root_src = Path(args.target).resolve()
         root_dest = Path(args.legacy_output).resolve()
-        sys.exit(run_watch_mode(root_src, root_dest, copy_extensions, header_files))
+        sys.exit(run_watch_mode(
+            root_src,
+            root_dest,
+            input_extensions,
+            copy_extensions,
+            header_files,
+            marp_header_files,
+            output_format,
+        ))
 
     if not args.target:
         root_src = Path.cwd()
         root_dest = Path(args.output).resolve() if args.output else root_src
-        sys.exit(run_watch_mode(root_src, root_dest, copy_extensions, header_files))
+        sys.exit(run_watch_mode(
+            root_src,
+            root_dest,
+            input_extensions,
+            copy_extensions,
+            header_files,
+            marp_header_files,
+            output_format,
+        ))
 
     target_path = Path(args.target).resolve()
     if not target_path.exists():
@@ -582,9 +872,25 @@ def main() -> None:
 
     if target_path.is_dir():
         root_dest = Path(args.output).resolve() if args.output else target_path
-        sys.exit(run_watch_mode(target_path, root_dest, copy_extensions, header_files))
+        sys.exit(run_watch_mode(
+            target_path,
+            root_dest,
+            input_extensions,
+            copy_extensions,
+            header_files,
+            marp_header_files,
+            output_format,
+        ))
 
-    sys.exit(run_single_file_mode(target_path, args.output, copy_extensions, header_files))
+    sys.exit(run_single_file_mode(
+        target_path,
+        args.output,
+        input_extensions,
+        copy_extensions,
+        header_files,
+        marp_header_files,
+        output_format,
+    ))
 
 
 if __name__ == "__main__":

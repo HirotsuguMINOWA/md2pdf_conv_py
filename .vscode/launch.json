@@ -21,7 +21,9 @@
                 "--output",
                 "${workspaceFolder:『EduMaterial』}/javascript入門/_publish_js入門",
                 "--header",
-                "${workspaceFolder:『md2pdf.PY』}/src/header.tex"
+                "${workspaceFolder:『md2pdf.PY』}/src/header.tex",
+                "--format",
+                "html"
             ]
         },
         {

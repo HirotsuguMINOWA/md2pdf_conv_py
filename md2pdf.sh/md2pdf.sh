@@ -161,7 +161,7 @@ fi
 echo "Press Ctrl+C to stop."
 
 /opt/homebrew/bin/chokidar \
-    "$WATCH_DIR/**/*.md" \
+    "$WATCH_DIR/**/*.html" \
     --use-polling \
     --interval 2000 \
     --shell bash \
