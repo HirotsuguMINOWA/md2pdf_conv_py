@@ -1,5 +1,15 @@
 # md2pdf.py2 Plan
 
+## 要実装
+
+1. 指定フォルダを監視し、変更が変更があった.mdファイルを「Goal」の節の通りhtml,pdfファイルを書き出す機能、を実装して下さい。
+
+
+## 次の要実装
+
+- 「/Users/hirots-m/Library/CloudStorage/GoogleDrive-lab.crux.ore@gmail.com/マイドライブ/projects0/md2pdf.py/src/md2pdf.py」との統合
+
+
 ## Goal
 
 `pandoc + lualatex` ベースではなく、`HTML -> Chrome/Chromium -> PDF` ベースで Markdown を PDF 化する。
