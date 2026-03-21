@@ -1,4 +1,27 @@
 #!/usr/bin/env python3
+"""
+markdown to pdf via HTML + Chrome converter
+
+このスクリプトは、MarkdownファイルをHTMLに変換し、Headless Chromeを使用してPDFに変換します。
+Markdown Preview Enhanced (MPE) のレンダリングスタイルに近づけるように設計されています。
+
+CLI パラメータ:
+    input                 入力Markdownファイルのパス（必須）
+    -o, --output          出力PDFファイルのパス（省略時は入力ファイル名の.pdf）
+    --chrome-path         Chrome/Chromiumの実行ファイルの明示的なパス
+    --mpe-crossnote-root  Markdown Preview Enhanced の crossnote ディレクトリパス
+                          (デフォルト: ~/.vscode/extensions/...)
+    --renderer-script     マークダウンレンダリング用JavaScriptファイルのパス
+                          (デフォルト: スクリプトと同じディレクトリの render_markdown.js)
+    --keep-html           HTMLファイルを出力PDFの隣に保持する（デフォルトは削除）
+    --timeout-ms          Headless Chromeのレンダリング完了までの時間（ミリ秒）
+                          (デフォルト: 15000)
+
+使用例:
+    python chrome_md_to_pdf.py README.md
+    python chrome_md_to_pdf.py README.md -o output.pdf
+    python chrome_md_to_pdf.py README.md --chrome-path /path/to/chrome --keep-html
+"""
 from __future__ import annotations
 
 import argparse
