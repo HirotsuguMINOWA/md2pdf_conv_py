@@ -102,7 +102,25 @@ def configure_logger(log_level: str) -> None:
 # パス設定
 # -------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
+
+
+def _resolve_repo_root() -> Path:
+    """Nuitka/PyInstaller ビルド済みバイナリ実行時は __file__ が一時展開ディレクトリを
+    指すため、sys.executable の親ディレクトリを REPO_ROOT として使う。"""
+    # Nuitka one-file: runtime extraction dir ≠ 実際のバイナリ置き場
+    try:
+        import __compiled__  # type: ignore[import]  # noqa: F401
+        return Path(sys.executable).resolve().parent
+    except ImportError:
+        pass
+    # PyInstaller
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return Path(sys.executable).resolve().parent
+    # 通常の Python 実行
+    return SCRIPT_DIR.parent
+
+
+REPO_ROOT = _resolve_repo_root()
 
 # pandoc 設定（md2pdf/md2pdf.py に準拠）
 PANDOC: str = "/opt/homebrew/bin/pandoc"
@@ -648,6 +666,12 @@ class MarkdownFileHandler(FileSystemEventHandler):
             logger.debug("Filesystem created event: {}", event.src_path)
             self.converter.process_file(event.src_path)
 
+    def on_moved(self, event: _FSEvent) -> None:
+        if not event.is_directory:
+            destination = getattr(event, 'dest_path', event.src_path)
+            logger.debug("Filesystem moved event: {} -> {}", event.src_path, destination)
+            self.converter.process_file(destination)
+
 
 def resolve_pandoc_header_files(header_files: list[str]) -> list[str]:
     resolved = header_files or [DEFAULT_HEADER_TEX]
@@ -870,10 +894,17 @@ def main() -> None:
         logger.error(f"Target does not exist: {target_path}")
         sys.exit(1)
 
-    if target_path.is_dir():
-        root_dest = Path(args.output).resolve() if args.output else target_path
+    if target_path.is_file():
+        root_src = target_path.parent
+        root_dest = Path(args.output).resolve() if args.output else root_src
+        if root_dest.suffix:
+            root_dest = root_dest.parent
+        logger.info(
+            "File target was provided; switching to watch mode for parent folder: {}",
+            root_src,
+        )
         sys.exit(run_watch_mode(
-            target_path,
+            root_src,
             root_dest,
             input_extensions,
             copy_extensions,
@@ -882,9 +913,10 @@ def main() -> None:
             output_format,
         ))
 
-    sys.exit(run_single_file_mode(
+    root_dest = Path(args.output).resolve() if args.output else target_path
+    sys.exit(run_watch_mode(
         target_path,
-        args.output,
+        root_dest,
         input_extensions,
         copy_extensions,
         header_files,

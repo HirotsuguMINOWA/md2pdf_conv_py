@@ -1,0 +1,65 @@
+name: Build chrome_md_to_pdf
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/md2pdf.py2/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'src/md2pdf.py2/**'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: chrome_md_to_pdf-linux
+            exe_name: chrome_md_to_pdf
+          - os: macos-latest
+            artifact_name: chrome_md_to_pdf-macos
+            exe_name: chrome_md_to_pdf
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Nuitka and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nuitka
+          # ordered-set and zstandard improve Nuitka build quality
+          pip install ordered-set zstandard
+
+      # Linux: install patchelf required by Nuitka --onefile
+      - name: Install patchelf (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y patchelf
+
+      - name: Build with Nuitka
+        run: |
+          python -m nuitka \
+            --onefile \
+            --follow-imports \
+            --standalone \
+            --output-dir=dist \
+            --output-filename=${{ matrix.exe_name }} \
+            --include-data-files=src/md2pdf.py2/render_markdown.js=render_markdown.js \
+            src/md2pdf.py2/chrome_md_to_pdf.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.exe_name }}
+          if-no-files-found: error
