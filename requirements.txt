@@ -1,2 +1,6 @@
 watchdog>=3.0.0
 # nuitka>=0.7.0
+pandoc-mermaid-selenium-filter
+pyinstaller
+pandoc
+loguru

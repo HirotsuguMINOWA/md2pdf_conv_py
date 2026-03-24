@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
  目的: markdownファイルをPDFまたはHTMLへ変換するソフト
+ 注意事項: ソースフォルダにCloudStorage(例:GDrive)があるため、ファイルの変更は『pollingで要取得』
  概略:
 1. 指定されたフォルダを監視して、markdownファイル(.md)ファイルが更新されたら、pdfへ変換する
 2. 変換されたPDFは、root_src PATHと同様のroot_destパスへコピーする
@@ -29,15 +30,8 @@ import subprocess
 import argparse
 import tempfile
 from pathlib import Path
-from typing import Protocol
 from loguru import logger
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 
-
-class _FSEvent(Protocol):
-    is_directory: bool
-    src_path: str
 
 
 class CommonInterface(ABC):
@@ -649,29 +643,6 @@ class MarkdownConverter:
         logger.info("Initial scan completed")
 
 
-# -------------------------------------------------------
-# watchdog イベントハンドラ
-# -------------------------------------------------------
-class MarkdownFileHandler(FileSystemEventHandler):
-    def __init__(self, converter: MarkdownConverter) -> None:
-        self.converter = converter
-
-    def on_modified(self, event: _FSEvent) -> None:
-        if not event.is_directory:
-            logger.debug("Filesystem modified event: {}", event.src_path)
-            self.converter.process_file(event.src_path)
-
-    def on_created(self, event: _FSEvent) -> None:
-        if not event.is_directory:
-            logger.debug("Filesystem created event: {}", event.src_path)
-            self.converter.process_file(event.src_path)
-
-    def on_moved(self, event: _FSEvent) -> None:
-        if not event.is_directory:
-            destination = getattr(event, 'dest_path', event.src_path)
-            logger.debug("Filesystem moved event: {} -> {}", event.src_path, destination)
-            self.converter.process_file(destination)
-
 
 def resolve_pandoc_header_files(header_files: list[str]) -> list[str]:
     resolved = header_files or [DEFAULT_HEADER_TEX]
@@ -788,21 +759,35 @@ def run_watch_mode(root_src: Path, root_dest: Path,
     converter.replicate_folder_structure()
     converter.initial_scan()
 
-    event_handler = MarkdownFileHandler(converter)
-    observer = Observer()
-    _ = observer.schedule(event_handler, str(root_src), recursive=True)
+    all_extensions = set(converter.input_extensions) | set(converter.copy_extensions)
 
-    logger.info(f"Starting file monitoring for {root_src}")
-    observer.start()
+    def _collect_mtimes() -> dict[Path, float]:
+        result: dict[Path, float] = {}
+        for p in root_src.rglob("*"):
+            if p.is_file() and p.suffix in all_extensions:
+                try:
+                    result[p] = p.stat().st_mtime
+                except OSError:
+                    pass
+        return result
+
+    logger.info(f"\n Starting file monitoring (polling) for {root_src}")
+    logger.info("Press Ctrl+C to stop.")
+    prev = _collect_mtimes()
 
     try:
         while True:
-            time.sleep(1)
+            logger.debug(f"waiting....")
+            time.sleep(2)
+            curr = _collect_mtimes()
+            for path, mtime in curr.items():
+                if path not in prev or prev[path] != mtime:
+                    logger.debug("Detected change: {}", path)
+                    converter.process_file(path)
+            prev = curr
     except KeyboardInterrupt:
         logger.info("Stopping file monitoring...")
-        observer.stop()
 
-    observer.join()
     logger.info("Program terminated")
     return 0
 
