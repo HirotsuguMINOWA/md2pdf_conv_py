@@ -86,7 +86,7 @@ def sanitize_markdown_for_pandoc(markdown_text: str) -> tuple[str, bool]:
 
 def configure_logger(log_level: str) -> None:
     logger.remove()
-    logger.add(
+    _=logger.add(
         sys.stderr,
         level=log_level.upper(),
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {message}",
@@ -777,13 +777,18 @@ def run_watch_mode(root_src: Path, root_dest: Path,
 
     try:
         while True:
-            logger.debug(f"waiting....")
+            logger.debug("waiting....")
             time.sleep(2)
             curr = _collect_mtimes()
             for path, mtime in curr.items():
                 if path not in prev or prev[path] != mtime:
-                    logger.debug("Detected change: {}", path)
-                    converter.process_file(path)
+                    logger.info("Detected change: {}", path)
+                    # should_convert の10秒閾値チェックを飛ばして即変換
+                    if path.suffix in converter.input_extensions:
+                        out = converter.get_dest_path(path, converter.get_output_extension())
+                        converter.convert_file_to_path(path, out)
+                    elif path.suffix in converter.copy_extensions:
+                        converter.copy_file(path)
             prev = curr
     except KeyboardInterrupt:
         logger.info("Stopping file monitoring...")
