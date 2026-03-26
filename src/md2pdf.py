@@ -33,7 +33,6 @@ from pathlib import Path
 from loguru import logger
 
 
-
 class CommonInterface(ABC):
     def get_path(self) -> str | Path:
         raise NotImplementedError
@@ -86,11 +85,12 @@ def sanitize_markdown_for_pandoc(markdown_text: str) -> tuple[str, bool]:
 
 def configure_logger(log_level: str) -> None:
     logger.remove()
-    _=logger.add(
+    _ = logger.add(
         sys.stderr,
         level=log_level.upper(),
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {message}",
     )
+
 
 # -------------------------------------------------------
 # パス設定
@@ -509,6 +509,7 @@ class MarkdownConverter:
                     text=True,
                     encoding='utf-8',
                     cwd=str(html_file.parent),
+                    timeout=50  # !これが無いと新しい変換されない
                 )
             if result.stdout:
                 print(result.stdout, end='')
@@ -641,7 +642,6 @@ class MarkdownConverter:
                 logger.debug("Initial scan visiting file: {}", file_path)
                 self.process_file(file_path)
         logger.info("Initial scan completed")
-
 
 
 def resolve_pandoc_header_files(header_files: list[str]) -> list[str]:
