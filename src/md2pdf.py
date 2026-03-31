@@ -366,13 +366,29 @@ class MarkdownConverter:
   const md = {md_json};
   document.getElementById('content').innerHTML = marked.parse(md);
 
-  mermaid.initialize({{ startOnLoad: false }});
-  mermaid.run({{ querySelector: '.mermaid' }}).then(() => {{
+  // スクリプト読み込みエラーや mermaid 描画エラー時でも必ず data-ready をセット
+  function markReady() {{
     document.body.setAttribute('data-ready', 'true');
-  }}).catch((e) => {{
-    console.error('mermaid rendering error:', e);
-    document.body.setAttribute('data-ready', 'true');
-  }});
+  }}
+
+  // 最大 25 秒でフォールバック（wait_for_selector の 30 秒より短く設定）
+  var _fallbackTimer = setTimeout(markReady, 25000);
+
+  try {{
+    mermaid.initialize({{ startOnLoad: false }});
+    mermaid.run({{ querySelector: '.mermaid' }}).then(function() {{
+      clearTimeout(_fallbackTimer);
+      markReady();
+    }}).catch(function(e) {{
+      console.error('mermaid rendering error:', e);
+      clearTimeout(_fallbackTimer);
+      markReady();
+    }});
+  }} catch(e) {{
+    console.error('mermaid init error:', e);
+    clearTimeout(_fallbackTimer);
+    markReady();
+  }}
 </script>
 </body>
 </html>"""
@@ -393,9 +409,10 @@ class MarkdownConverter:
             try:
                 with sync_playwright() as p:
                     browser = p.chromium.launch()
+                    # set_content() を使うことで file:// 制約なしに CDN スクリプトを読み込める
                     page = browser.new_page()
-                    page.goto(html_path.resolve().as_uri())
-                    page.wait_for_selector('[data-ready="true"]', timeout=30000)
+                    page.set_content(html, wait_until='domcontentloaded')
+                    page.wait_for_selector('[data-ready="true"]', timeout=60000)
                     page.pdf(
                         path=str(output_file),
                         print_background=True,
@@ -802,26 +819,33 @@ class MarkdownConverter:
             return False
 
     def should_convert(self, src_file: Path) -> bool:
-        """変換が必要かどうか判定（タイムスタンプ比較）"""
-        output_file = self.get_dest_path(src_file, self.get_output_extension())
-        if not output_file.exists():
-            logger.debug("Destination output does not exist yet, converting: {}", output_file)
-            return True
+        """変換が必要かどうか判定（全出力フォーマットのタイムスタンプ比較）。
+        いずれかの出力が存在しない、または10秒以上古ければ変換する。"""
         try:
             md_mtime = src_file.stat().st_mtime
-            output_mtime = output_file.stat().st_mtime
-            should_rebuild = (md_mtime - output_mtime) > 10
-            logger.debug(
-                "Timestamp comparison for {}: src_mtime={}, output_mtime={}, should_convert={}",
-                src_file,
-                md_mtime,
-                output_mtime,
-                should_rebuild,
-            )
-            return should_rebuild
         except Exception as e:
-            logger.error(f"Error comparing timestamps: {e}")
+            logger.error(f"Error reading source file timestamp: {e}")
             return True
+
+        for fmt in self.output_formats:
+            ext = OUTPUT_EXTENSIONS[fmt]
+            output_file = self.get_dest_path(src_file, ext)
+            if not output_file.exists():
+                logger.debug("Destination output does not exist yet, converting: {}", output_file)
+                return True
+            try:
+                output_mtime = output_file.stat().st_mtime
+                should_rebuild = (md_mtime - output_mtime) > 10
+                logger.debug(
+                    "Timestamp comparison for {} ({}): src_mtime={}, output_mtime={}, should_convert={}",
+                    src_file, fmt, md_mtime, output_mtime, should_rebuild,
+                )
+                if should_rebuild:
+                    return True
+            except Exception as e:
+                logger.error(f"Error comparing timestamps for {output_file}: {e}")
+                return True
+        return False
 
     def process_file(self, file_path: str | Path) -> None:
         """ファイルを処理"""
@@ -829,7 +853,7 @@ class MarkdownConverter:
         logger.debug("Processing filesystem path: {}", p)
         if p.suffix in self.input_extensions:
             if self.should_convert(p):
-                _ = self.convert_file_to_path(p, self.get_dest_path(p, self.get_output_extension()))
+                _ = self.convert_markdown(p)
             else:
                 logger.debug("Skipping source file because output is up-to-date: {}", p)
         elif p.suffix in self.copy_extensions:
@@ -1004,8 +1028,7 @@ def run_watch_mode(root_src: Path, root_dest: Path,
                     logger.info("Detected change: {}", path)
                     # should_convert の10秒閾値チェックを飛ばして即変換
                     if path.suffix in converter.input_extensions:
-                        out = converter.get_dest_path(path, converter.get_output_extension())
-                        converter.convert_file_to_path(path, out)
+                        converter.convert_markdown(path)
                     elif path.suffix in converter.copy_extensions:
                         converter.copy_file(path)
             prev = curr
