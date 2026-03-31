@@ -54,6 +54,7 @@ DEFAULT_INPUT_EXTENSIONS: list[str] = [".md"]
 OUTPUT_EXTENSIONS: dict[str, str] = {
     "pdf": ".pdf",
     "html": ".html",
+    "html_pdf": ".pdf",  # md→html（中間）→pdf の2段階変換。出力拡張子は .pdf
 }
 SUPPORTED_INPUT_EXTENSIONS: set[str] = {".md", ".html"}
 
@@ -337,10 +338,12 @@ class MarkdownConverter:
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css">
 <style>
   body {{ font-family: "Hiragino Kaku Gothic ProN", sans-serif;
           max-width: 900px; margin: 0 auto; padding: 2em; }}
-  pre code {{ background: #f4f4f4; display: block; padding: 1em; }}
+  pre {{ background: #f6f8fa; border-radius: 6px; padding: 1em; overflow-x: auto; }}
+  pre code.hljs {{ background: transparent; padding: 0; }}
   .mermaid {{ text-align: center; }}
 </style>
 </head>
@@ -348,10 +351,9 @@ class MarkdownConverter:
 <div id="content"></div>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/highlight.min.js"></script>
 <script>
   // mermaid コードブロックを <div class="mermaid"> に変換するカスタムレンダラー
-  // marked.js は ```mermaid を <code class="language-mermaid"> に変換するが、
-  // mermaid.js v10+ は <div class="mermaid"> を期待するため変換が必要
   marked.use({{
     renderer: {{
       code({{ text, lang }}) {{
@@ -365,6 +367,11 @@ class MarkdownConverter:
 
   const md = {md_json};
   document.getElementById('content').innerHTML = marked.parse(md);
+
+  // シンタックスハイライト（mermaid 以外のコードブロック）
+  document.querySelectorAll('pre code').forEach(function(el) {{
+    hljs.highlightElement(el);
+  }});
 
   // スクリプト読み込みエラーや mermaid 描画エラー時でも必ず data-ready をセット
   function markReady() {{
@@ -392,6 +399,18 @@ class MarkdownConverter:
 </script>
 </body>
 </html>"""
+
+    def convert_to_html(self, md_file: Path, output_file: Path) -> bool:
+        """MD → HTML（mermaid.js + highlight.js 対応のブラウザ向け HTML を直接書き出す）"""
+        try:
+            md_text = md_file.read_text(encoding='utf-8')
+            html = self._build_html_for_playwright(md_text)
+            output_file.write_text(html, encoding='utf-8')
+            logger.info(f"[html-template] {md_file} -> {output_file}")
+            return True
+        except Exception as e:
+            logger.error(f"HTML output failed: {e}")
+            return False
 
     def convert_with_playwright(self, md_file: Path, output_file: Path) -> bool:
         """Playwright で MD（mermaid/plantuml 含む）→ PDF 変換"""
@@ -641,6 +660,10 @@ class MarkdownConverter:
                         md_file,
                     )
             else:
+                # HTML出力時: PlantUML ブロックを inline SVG に変換してから pandoc へ渡す
+                # (pandoc は raw HTML を --standalone HTML にそのまま埋め込む)
+                if self.plantuml_cli_available:
+                    markdown_input = self._replace_plantuml_with_svg(markdown_input)
                 cmd.extend([
                     '-t', 'html5',
                     '--standalone',
@@ -736,10 +759,9 @@ class MarkdownConverter:
         if self.engine == 'slidev':
             return self.convert_with_slidev(src_file, output_file)
         if self.engine == 'playwright':
-            # playwright は PDF のみ対応。html フォーマット時は pandoc にフォールバック
             if self.output_format == 'pdf':
                 return self.convert_with_playwright(src_file, output_file)
-            return self.convert_with_pandoc(src_file, output_file)
+            return self.convert_to_html(src_file, output_file)
         if self.engine == 'pandoc':
             return self.convert_with_pandoc(src_file, output_file)
         # engine == 'auto': 自動判定
@@ -747,10 +769,13 @@ class MarkdownConverter:
             return self.convert_with_marp(src_file, output_file)
         if self.slidev_available and self.is_slidev_file(src_file):
             return self.convert_with_slidev(src_file, output_file)
-        if self.playwright_available and self.output_format == 'pdf':
-            md_text = src_file.read_text(encoding='utf-8')
-            if has_diagram_blocks(md_text):
-                return self.convert_with_playwright(src_file, output_file)
+        if self.playwright_available:
+            if self.output_format == 'pdf':
+                md_text = src_file.read_text(encoding='utf-8')
+                if has_diagram_blocks(md_text):
+                    return self.convert_with_playwright(src_file, output_file)
+            elif self.output_format == 'html':
+                return self.convert_to_html(src_file, output_file)
         return self.convert_with_pandoc(src_file, output_file)
 
     def get_output_extension(self) -> str:
@@ -759,15 +784,40 @@ class MarkdownConverter:
         return extension
 
     def convert_markdown(self, md_file: Path) -> bool:
-        """変換ツールを自動選択して指定形式に変換（marp > slidev > pandoc）。複数フォーマット対応。"""
+        """変換ツールを自動選択して指定形式に変換（marp > slidev > pandoc）。"""
         all_ok = True
         for fmt in self.output_formats:
-            self.output_format = fmt
-            output_file = self.get_dest_path(md_file, self.get_output_extension())
-            ok = self.convert_file_to_path(md_file, output_file)
+            if fmt == 'html_pdf':
+                ok = self._convert_md_via_html_to_pdf(md_file)
+            else:
+                self.output_format = fmt
+                output_file = self.get_dest_path(md_file, self.get_output_extension())
+                ok = self.convert_file_to_path(md_file, output_file)
             if not ok:
                 all_ok = False
         return all_ok
+
+    def _convert_md_via_html_to_pdf(self, md_file: Path) -> bool:
+        """md → html（中間ファイル）→ pdf の2段階変換。
+        中間 HTML は出力フォルダに .html として保存し、それを Chrome で PDF 化する。"""
+        html_output = self.get_dest_path(md_file, '.html')
+        pdf_output = self.get_dest_path(md_file, '.pdf')
+
+        # Step1: md → html
+        self.output_format = 'html'
+        self.ensure_dest_dir(html_output)
+        ok_html = self.convert_to_html(md_file, html_output)
+        if not ok_html:
+            logger.error(f"html_pdf mode: HTML generation failed: {md_file}")
+            return False
+
+        # Step2: html → pdf（Chrome headless）
+        self.output_format = 'pdf'
+        self.ensure_dest_dir(pdf_output)
+        ok_pdf = self.convert_html_with_pandoc(html_output, pdf_output)
+        if not ok_pdf:
+            logger.error(f"html_pdf mode: PDF generation failed: {html_output}")
+        return ok_pdf
 
     def convert_markdown_to_pdf(self, md_file: Path) -> bool:
         """後方互換用。現在の output_formats に従って変換する。"""
@@ -1060,11 +1110,12 @@ def main() -> None:
                             help='Header TeX file to pass to pandoc (repeatable)')
     _ = parser.add_argument('--marp-header', action='append', default=[],
                             help='Markdown/YAML fragment file to inject into Marp frontmatter (repeatable)')
-    _ = parser.add_argument('--format-output', '--format_output', nargs='+',
+    _ = parser.add_argument('--format-output', '--format_output',
                             choices=sorted(OUTPUT_EXTENSIONS),
-                            default=[DEFAULT_OUTPUT_FORMAT],
-                            help=f'Output format(s) (default: {DEFAULT_OUTPUT_FORMAT}). '
-                                 f'複数指定可: --format-output pdf html')
+                            default=DEFAULT_OUTPUT_FORMAT,
+                            help=f'Output format (default: {DEFAULT_OUTPUT_FORMAT}). '
+                                 f'選択肢: pdf / html / html_pdf'
+                                 f'  html_pdf: md→html(mermaid/highlight対応)→pdf の2段階変換')
     _ = parser.add_argument('--log-level', default=DEFAULT_LOG_LEVEL,
                             help=f'Loguru log level (default: {DEFAULT_LOG_LEVEL})')
     _ = parser.add_argument('--copy-extensions', nargs='+',
@@ -1085,7 +1136,7 @@ def main() -> None:
     input_extensions = normalize_input_extensions(args.format_input)
     header_files = resolve_pandoc_header_files(args.header)
     marp_header_files = resolve_marp_header_files(args.marp_header)
-    output_formats = normalize_output_formats(args.format_output)
+    output_formats = normalize_output_formats([args.format_output])
     engine: str = args.engine
 
     if args.watch is not None:

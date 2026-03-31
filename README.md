@@ -43,7 +43,7 @@ brew install plantuml
 |---|---|
 |`--format-input`, `--format_input`|変換対象の入力拡張子を指定(例: `.md`, `.html`)|
 |`--engine`|変換エンジンを指定(`auto` / `pandoc` / `playwright` / `marp` / `slidev`)。default=`auto`（mermaid/plantumlブロックがあれば自動的に`playwright`を使用）|
-|`--format-output`, `--format_output`|出力形式を指定(`pdf`, `html`)。複数指定可: `--format-output pdf html`|
+|`--format-output`, `--format_output`|出力形式を指定。選択肢: `pdf` / `html` / `html_pdf`。デフォルト: `html_pdf`|
 |`--watch`|変換するためフォルダ(サブフォルダ)を監視する|
 |`--header`(任意)|pandocで PDF 変換の際に使う `header.tex`|
 |`--marp-header`(任意)|Marp frontmatter に追加する YAML/Markdown 断片|
@@ -58,9 +58,18 @@ brew install plantuml
 - **フォルダ構造保持**: ソースフォルダの階層構造を保持して変換先フォルダに複製
 - **ファイルコピー**: 画像ファイルなど指定された拡張子のファイルを自動コピー
 - **タイムスタンプ比較**: 10秒以上の差がある場合のみ変換を実行
+- **Mermaid/PlantUML対応**: `--engine playwright` でダイアグラムを図に変換（PDF/HTML 両対応）
 
 
 ## 変換機能
+
+### `--format-output` の選択肢
+
+| 値 | 動作 |
+| --- | --- |
+| `pdf` | md → PDF（pandoc/marp/slidev/playwright で変換） |
+| `html` | md → HTML（playwright 使用時は mermaid.js + highlight.js 入りブラウザ対応 HTML） |
+| `html_pdf` | md → HTML（mermaid/highlight対応）→ PDF の2段階変換。HTML も出力フォルダに保存される |
 
 ### html→PDF
 
@@ -70,7 +79,7 @@ html をそのまま PDF へ変換する
 `.html` は Chrome/Chromium の headless print を使って PDF 化します。
 
 注意:
-HTML 入力は現在 `pdf` 出力のみをサポートします。`--format html` と `.html` 入力の組み合わせは未対応です。
+HTML 入力は `pdf` 出力のみをサポートします。
 
 
 ## 必要な環境
