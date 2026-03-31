@@ -43,7 +43,7 @@ brew install plantuml
 |---|---|
 |`--format-input`, `--format_input`|変換対象の入力拡張子を指定(例: `.md`, `.html`)|
 |`--engine`|変換エンジンを指定(`auto` / `pandoc` / `playwright` / `marp` / `slidev`)。default=`auto`（mermaid/plantumlブロックがあれば自動的に`playwright`を使用）|
-|`--format`|出力形式を指定(`pdf`, `html`)|
+|`--format-output`, `--format_output`|出力形式を指定(`pdf`, `html`)。複数指定可: `--format-output pdf html`|
 |`--watch`|変換するためフォルダ(サブフォルダ)を監視する|
 |`--header`(任意)|pandocで PDF 変換の際に使う `header.tex`|
 |`--marp-header`(任意)|Marp frontmatter に追加する YAML/Markdown 断片|

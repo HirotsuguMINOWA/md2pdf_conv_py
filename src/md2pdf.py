@@ -169,14 +169,15 @@ class MarkdownConverter:
     marp_header_files: list[str]
     marp_available: bool
     slidev_available: bool
-    output_format: str
+    output_formats: list[str]
+    output_format: str  # 変換中の現在フォーマット（convert_markdown内でセット）
 
     def __init__(self, root_src: str, root_dest: str,
                  input_extensions: list[str] | None = None,
                  copy_extensions: list[str] | None = None,
                  header_files: list[str] | None = None,
                  marp_header_files: list[str] | None = None,
-                 output_format: str = DEFAULT_OUTPUT_FORMAT,
+                 output_formats: list[str] | None = None,
                  engine: str = 'auto') -> None:
         self.root_src = Path(root_src)
         self.root_dest = Path(root_dest)
@@ -184,17 +185,18 @@ class MarkdownConverter:
         self.copy_extensions = copy_extensions or ['.png', '.jpg', '.jpeg', '.gif', '.svg']
         self.header_files = header_files or [DEFAULT_HEADER_TEX]
         self.marp_header_files = marp_header_files or []
-        self.output_format = normalize_output_format(output_format)
+        self.output_formats = normalize_output_formats(output_formats or [DEFAULT_OUTPUT_FORMAT])
+        self.output_format = self.output_formats[0]  # 内部処理用の現在値
         self.engine = engine
         logger.debug(
-            "Initializing MarkdownConverter: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}, engine={}",
+            "Initializing MarkdownConverter: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
             self.root_src,
             self.root_dest,
             self.input_extensions,
             self.copy_extensions,
             self.header_files,
             self.marp_header_files,
-            self.output_format,
+            self.output_formats,
             self.engine,
         )
         self.marp_available = self._check_marp()
@@ -717,7 +719,10 @@ class MarkdownConverter:
         if self.engine == 'slidev':
             return self.convert_with_slidev(src_file, output_file)
         if self.engine == 'playwright':
-            return self.convert_with_playwright(src_file, output_file)
+            # playwright は PDF のみ対応。html フォーマット時は pandoc にフォールバック
+            if self.output_format == 'pdf':
+                return self.convert_with_playwright(src_file, output_file)
+            return self.convert_with_pandoc(src_file, output_file)
         if self.engine == 'pandoc':
             return self.convert_with_pandoc(src_file, output_file)
         # engine == 'auto': 自動判定
@@ -737,12 +742,18 @@ class MarkdownConverter:
         return extension
 
     def convert_markdown(self, md_file: Path) -> bool:
-        """変換ツールを自動選択して指定形式に変換（marp > slidev > pandoc）"""
-        output_file = self.get_dest_path(md_file, self.get_output_extension())
-        return self.convert_file_to_path(md_file, output_file)
+        """変換ツールを自動選択して指定形式に変換（marp > slidev > pandoc）。複数フォーマット対応。"""
+        all_ok = True
+        for fmt in self.output_formats:
+            self.output_format = fmt
+            output_file = self.get_dest_path(md_file, self.get_output_extension())
+            ok = self.convert_file_to_path(md_file, output_file)
+            if not ok:
+                all_ok = False
+        return all_ok
 
     def convert_markdown_to_pdf(self, md_file: Path) -> bool:
-        """後方互換用。現在の output_format に従って変換する。"""
+        """後方互換用。現在の output_formats に従って変換する。"""
         return self.convert_markdown(md_file)
 
     # -------------------------------------------------------
@@ -856,6 +867,17 @@ def normalize_output_format(output_format: str) -> str:
     return normalized
 
 
+def normalize_output_formats(output_formats: list[str]) -> list[str]:
+    seen: list[str] = []
+    for fmt in output_formats:
+        normalized = normalize_output_format(fmt)
+        if normalized not in seen:
+            seen.append(normalized)
+    if not seen:
+        raise ValueError("At least one output format must be specified")
+    return seen
+
+
 def normalize_input_extensions(input_extensions: list[str] | None) -> list[str]:
     normalized = input_extensions or DEFAULT_INPUT_EXTENSIONS
     resolved: list[str] = []
@@ -893,19 +915,20 @@ def resolve_single_output_path(input_path: Path, output_arg: str | None, output_
 
 def run_single_file_mode(input_path: Path, output_arg: str | None,
                          input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
-                         marp_header_files: list[str], output_format: str, engine: str = 'auto') -> int:
+                         marp_header_files: list[str], output_formats: list[str], engine: str = 'auto') -> int:
     logger.debug(
-        "Running single file mode: input_path={}, output_arg={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}, engine={}",
+        "Running single file mode: input_path={}, output_arg={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
         input_path,
         output_arg,
         input_extensions,
         copy_extensions,
         header_files,
         marp_header_files,
-        output_format,
+        output_formats,
         engine,
     )
-    output_path = resolve_single_output_path(input_path, output_arg, output_format)
+    # single file mode: 最初のフォーマットで出力先パスを決定、複数フォーマットは converter 内でループ
+    output_path = resolve_single_output_path(input_path, output_arg, output_formats[0])
     converter = MarkdownConverter(
         str(input_path.parent),
         str(output_path.parent),
@@ -913,25 +936,25 @@ def run_single_file_mode(input_path: Path, output_arg: str | None,
         copy_extensions=copy_extensions,
         header_files=header_files,
         marp_header_files=marp_header_files,
-        output_format=output_format,
+        output_formats=output_formats,
         engine=engine,
     )
-    succeeded = converter.convert_file_to_path(input_path, output_path)
+    succeeded = converter.convert_markdown(input_path)
     return 0 if succeeded else 1
 
 
 def run_watch_mode(root_src: Path, root_dest: Path,
                    input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
-                   marp_header_files: list[str], output_format: str, engine: str = 'auto') -> int:
+                   marp_header_files: list[str], output_formats: list[str], engine: str = 'auto') -> int:
     logger.debug(
-        "Running watch mode: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}, engine={}",
+        "Running watch mode: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
         root_src,
         root_dest,
         input_extensions,
         copy_extensions,
         header_files,
         marp_header_files,
-        output_format,
+        output_formats,
         engine,
     )
     if not root_src.exists():
@@ -948,7 +971,7 @@ def run_watch_mode(root_src: Path, root_dest: Path,
         copy_extensions=copy_extensions,
         header_files=header_files,
         marp_header_files=marp_header_files,
-        output_format=output_format,
+        output_formats=output_formats,
         engine=engine,
     )
 
@@ -1014,9 +1037,11 @@ def main() -> None:
                             help='Header TeX file to pass to pandoc (repeatable)')
     _ = parser.add_argument('--marp-header', action='append', default=[],
                             help='Markdown/YAML fragment file to inject into Marp frontmatter (repeatable)')
-    _ = parser.add_argument('--format', choices=sorted(OUTPUT_EXTENSIONS),
-                            default=DEFAULT_OUTPUT_FORMAT,
-                            help=f'Output format (default: {DEFAULT_OUTPUT_FORMAT})')
+    _ = parser.add_argument('--format-output', '--format_output', nargs='+',
+                            choices=sorted(OUTPUT_EXTENSIONS),
+                            default=[DEFAULT_OUTPUT_FORMAT],
+                            help=f'Output format(s) (default: {DEFAULT_OUTPUT_FORMAT}). '
+                                 f'複数指定可: --format-output pdf html')
     _ = parser.add_argument('--log-level', default=DEFAULT_LOG_LEVEL,
                             help=f'Loguru log level (default: {DEFAULT_LOG_LEVEL})')
     _ = parser.add_argument('--copy-extensions', nargs='+',
@@ -1037,7 +1062,7 @@ def main() -> None:
     input_extensions = normalize_input_extensions(args.format_input)
     header_files = resolve_pandoc_header_files(args.header)
     marp_header_files = resolve_marp_header_files(args.marp_header)
-    output_format = normalize_output_format(args.format)
+    output_formats = normalize_output_formats(args.format_output)
     engine: str = args.engine
 
     if args.watch is not None:
@@ -1053,7 +1078,7 @@ def main() -> None:
             copy_extensions,
             header_files,
             marp_header_files,
-            output_format,
+            output_formats,
             engine,
         ))
 
@@ -1067,7 +1092,7 @@ def main() -> None:
             copy_extensions,
             header_files,
             marp_header_files,
-            output_format,
+            output_formats,
             engine,
         ))
 
@@ -1081,7 +1106,7 @@ def main() -> None:
             copy_extensions,
             header_files,
             marp_header_files,
-            output_format,
+            output_formats,
             engine,
         ))
 
@@ -1106,7 +1131,7 @@ def main() -> None:
             copy_extensions,
             header_files,
             marp_header_files,
-            output_format,
+            output_formats,
             engine,
         ))
 
@@ -1118,7 +1143,7 @@ def main() -> None:
         copy_extensions,
         header_files,
         marp_header_files,
-        output_format,
+        output_formats,
         engine,
     ))
 
