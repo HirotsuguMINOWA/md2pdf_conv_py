@@ -21,7 +21,9 @@
 """
 
 from abc import ABC
+import json
 import os
+import re
 import sys
 import platform
 import time
@@ -75,6 +77,14 @@ PANDOC_TEXT_REPLACEMENTS: dict[int, str] = {
     ord("🔴"): "[RED]",
     ord("🟢"): "[GREEN]",
 }
+
+
+MERMAID_BLOCK_RE = re.compile(r'```mermaid\n(.*?)```', re.DOTALL)
+PLANTUML_BLOCK_RE = re.compile(r'```plantuml\n(.*?)```', re.DOTALL)
+
+
+def has_diagram_blocks(text: str) -> bool:
+    return bool(MERMAID_BLOCK_RE.search(text) or PLANTUML_BLOCK_RE.search(text))
 
 
 def sanitize_markdown_for_pandoc(markdown_text: str) -> tuple[str, bool]:
@@ -166,7 +176,8 @@ class MarkdownConverter:
                  copy_extensions: list[str] | None = None,
                  header_files: list[str] | None = None,
                  marp_header_files: list[str] | None = None,
-                 output_format: str = DEFAULT_OUTPUT_FORMAT) -> None:
+                 output_format: str = DEFAULT_OUTPUT_FORMAT,
+                 engine: str = 'auto') -> None:
         self.root_src = Path(root_src)
         self.root_dest = Path(root_dest)
         self.input_extensions = normalize_input_extensions(input_extensions)
@@ -174,8 +185,9 @@ class MarkdownConverter:
         self.header_files = header_files or [DEFAULT_HEADER_TEX]
         self.marp_header_files = marp_header_files or []
         self.output_format = normalize_output_format(output_format)
+        self.engine = engine
         logger.debug(
-            "Initializing MarkdownConverter: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}",
+            "Initializing MarkdownConverter: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}, engine={}",
             self.root_src,
             self.root_dest,
             self.input_extensions,
@@ -183,9 +195,12 @@ class MarkdownConverter:
             self.header_files,
             self.marp_header_files,
             self.output_format,
+            self.engine,
         )
         self.marp_available = self._check_marp()
         self.slidev_available = self._check_slidev()
+        self.playwright_available = self._check_playwright()
+        self.plantuml_cli_available = self._check_plantuml_cli()
 
         # 出力フォルダを作成
         self.root_dest.mkdir(parents=True, exist_ok=True)
@@ -229,6 +244,170 @@ class MarkdownConverter:
             logger.debug("Slidev availability check raised an exception: {}", exc)
         logger.warning("slidev not found. Slidev conversion unavailable.")
         return False
+
+    def _check_playwright(self) -> bool:
+        # playwright パッケージ確認・自動インストール
+        try:
+            import playwright  # noqa: F401
+        except ImportError:
+            logger.info("playwright not installed. Installing via pip...")
+            result = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', 'playwright'],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                logger.error(
+                    f"Failed to install playwright:\n{result.stderr}\n"
+                    "  Fix: pip install playwright"
+                )
+                return False
+            logger.info("playwright installed successfully.")
+
+        # Chromium ブラウザバイナリ確認・自動インストール
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch(timeout=10000)
+                browser.close()
+            logger.info("Playwright chromium browser is available.")
+            return True
+        except Exception:
+            logger.info("Playwright chromium not found. Installing via `playwright install chromium`...")
+            result = subprocess.run(
+                [sys.executable, '-m', 'playwright', 'install', 'chromium'],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                logger.error(
+                    f"Failed to install Playwright chromium:\n{result.stderr}\n"
+                    "  Fix: playwright install chromium"
+                )
+                return False
+            logger.info("Playwright chromium installed successfully.")
+            return True
+
+    def _check_plantuml_cli(self) -> bool:
+        found = shutil.which('plantuml')
+        if found:
+            logger.info(f"plantuml CLI found: {found}")
+            return True
+        logger.warning("plantuml CLI not found. PlantUML blocks will not be converted to diagrams.")
+        return False
+
+    def _replace_plantuml_with_svg(self, md_text: str) -> str:
+        """plantuml コードブロックを inline SVG に置換する"""
+        def replace(m: re.Match) -> str:
+            code = m.group(1)
+            puml_path = ''
+            svg_path = ''
+            try:
+                with tempfile.NamedTemporaryFile(
+                    suffix='.puml', mode='w', encoding='utf-8', delete=False
+                ) as f:
+                    f.write('@startuml\n' + code + '\n@enduml')
+                    puml_path = f.name
+                svg_path = puml_path.replace('.puml', '.svg')
+                subprocess.run(
+                    ['plantuml', '-tsvg', puml_path],
+                    capture_output=True, check=True
+                )
+                svg_content = Path(svg_path).read_text(encoding='utf-8')
+                svg_clean = re.sub(r'<\?xml[^>]+\?>', '', svg_content).strip()
+                return f'\n\n<div class="plantuml-diagram">{svg_clean}</div>\n\n'
+            except Exception as e:
+                logger.warning(f"PlantUML conversion failed: {e}")
+                return m.group(0)
+            finally:
+                for p in [puml_path, svg_path]:
+                    try:
+                        if p:
+                            Path(p).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        return PLANTUML_BLOCK_RE.sub(replace, md_text)
+
+    def _build_html_for_playwright(self, md_text: str) -> str:
+        """marked.js + mermaid.js を埋め込んだ HTML 文字列を生成する"""
+        if self.plantuml_cli_available:
+            md_text = self._replace_plantuml_with_svg(md_text)
+        md_json = json.dumps(md_text)
+        return f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<style>
+  body {{ font-family: "Hiragino Kaku Gothic ProN", sans-serif;
+          max-width: 900px; margin: 0 auto; padding: 2em; }}
+  pre code {{ background: #f4f4f4; display: block; padding: 1em; }}
+  .mermaid {{ text-align: center; }}
+</style>
+</head>
+<body>
+<div id="content"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  // mermaid コードブロックを <div class="mermaid"> に変換するカスタムレンダラー
+  // marked.js は ```mermaid を <code class="language-mermaid"> に変換するが、
+  // mermaid.js v10+ は <div class="mermaid"> を期待するため変換が必要
+  marked.use({{
+    renderer: {{
+      code({{ text, lang }}) {{
+        if (lang === 'mermaid') {{
+          return '<div class="mermaid">' + text + '</div>';
+        }}
+        return false;
+      }}
+    }}
+  }});
+
+  const md = {md_json};
+  document.getElementById('content').innerHTML = marked.parse(md);
+
+  mermaid.initialize({{ startOnLoad: false }});
+  mermaid.run({{ querySelector: '.mermaid' }}).then(() => {{
+    document.body.setAttribute('data-ready', 'true');
+  }}).catch((e) => {{
+    console.error('mermaid rendering error:', e);
+    document.body.setAttribute('data-ready', 'true');
+  }});
+</script>
+</body>
+</html>"""
+
+    def convert_with_playwright(self, md_file: Path, output_file: Path) -> bool:
+        """Playwright で MD（mermaid/plantuml 含む）→ PDF 変換"""
+        try:
+            from playwright.sync_api import sync_playwright
+            md_text = md_file.read_text(encoding='utf-8')
+            html = self._build_html_for_playwright(md_text)
+
+            with tempfile.NamedTemporaryFile(
+                suffix='.html', mode='w', encoding='utf-8', delete=False
+            ) as f:
+                f.write(html)
+                html_path = Path(f.name)
+
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch()
+                    page = browser.new_page()
+                    page.goto(html_path.resolve().as_uri())
+                    page.wait_for_selector('[data-ready="true"]', timeout=30000)
+                    page.pdf(
+                        path=str(output_file),
+                        print_background=True,
+                        format='A4',
+                    )
+                    browser.close()
+            finally:
+                html_path.unlink(missing_ok=True)
+
+            logger.info(f"[playwright] {md_file} -> {output_file}")
+            return True
+        except Exception as e:
+            logger.error(f"Playwright conversion failed: {e}")
+            return False
 
     def _find_chrome_binary(self) -> str | None:
         for candidate in DEFAULT_CHROME_CANDIDATES:
@@ -533,10 +712,23 @@ class MarkdownConverter:
         if src_file.suffix == '.html':
             return self.convert_html_with_pandoc(src_file, output_file)
 
+        if self.engine == 'marp':
+            return self.convert_with_marp(src_file, output_file)
+        if self.engine == 'slidev':
+            return self.convert_with_slidev(src_file, output_file)
+        if self.engine == 'playwright':
+            return self.convert_with_playwright(src_file, output_file)
+        if self.engine == 'pandoc':
+            return self.convert_with_pandoc(src_file, output_file)
+        # engine == 'auto': 自動判定
         if self.marp_available and self.is_marp_file(src_file):
             return self.convert_with_marp(src_file, output_file)
         if self.slidev_available and self.is_slidev_file(src_file):
             return self.convert_with_slidev(src_file, output_file)
+        if self.playwright_available and self.output_format == 'pdf':
+            md_text = src_file.read_text(encoding='utf-8')
+            if has_diagram_blocks(md_text):
+                return self.convert_with_playwright(src_file, output_file)
         return self.convert_with_pandoc(src_file, output_file)
 
     def get_output_extension(self) -> str:
@@ -701,9 +893,9 @@ def resolve_single_output_path(input_path: Path, output_arg: str | None, output_
 
 def run_single_file_mode(input_path: Path, output_arg: str | None,
                          input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
-                         marp_header_files: list[str], output_format: str) -> int:
+                         marp_header_files: list[str], output_format: str, engine: str = 'auto') -> int:
     logger.debug(
-        "Running single file mode: input_path={}, output_arg={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}",
+        "Running single file mode: input_path={}, output_arg={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}, engine={}",
         input_path,
         output_arg,
         input_extensions,
@@ -711,6 +903,7 @@ def run_single_file_mode(input_path: Path, output_arg: str | None,
         header_files,
         marp_header_files,
         output_format,
+        engine,
     )
     output_path = resolve_single_output_path(input_path, output_arg, output_format)
     converter = MarkdownConverter(
@@ -721,6 +914,7 @@ def run_single_file_mode(input_path: Path, output_arg: str | None,
         header_files=header_files,
         marp_header_files=marp_header_files,
         output_format=output_format,
+        engine=engine,
     )
     succeeded = converter.convert_file_to_path(input_path, output_path)
     return 0 if succeeded else 1
@@ -728,9 +922,9 @@ def run_single_file_mode(input_path: Path, output_arg: str | None,
 
 def run_watch_mode(root_src: Path, root_dest: Path,
                    input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
-                   marp_header_files: list[str], output_format: str) -> int:
+                   marp_header_files: list[str], output_format: str, engine: str = 'auto') -> int:
     logger.debug(
-        "Running watch mode: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}",
+        "Running watch mode: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_format={}, engine={}",
         root_src,
         root_dest,
         input_extensions,
@@ -738,6 +932,7 @@ def run_watch_mode(root_src: Path, root_dest: Path,
         header_files,
         marp_header_files,
         output_format,
+        engine,
     )
     if not root_src.exists():
         logger.error(f"Source folder does not exist: {root_src}")
@@ -754,6 +949,7 @@ def run_watch_mode(root_src: Path, root_dest: Path,
         header_files=header_files,
         marp_header_files=marp_header_files,
         output_format=output_format,
+        engine=engine,
     )
 
     converter.replicate_folder_structure()
@@ -826,6 +1022,12 @@ def main() -> None:
     _ = parser.add_argument('--copy-extensions', nargs='+',
                             default=['.png', '.jpg', '.jpeg', '.gif', '.svg'],
                             help='File extensions to copy (default: .png .jpg .jpeg .gif .svg)')
+    _ = parser.add_argument('--engine',
+                            choices=['auto', 'pandoc', 'playwright', 'marp', 'slidev'],
+                            default='auto',
+                            help='Conversion engine to use (default: auto). '
+                                 'auto=自動判定, pandoc=強制pandoc, playwright=強制Playwright, '
+                                 'marp=強制marp, slidev=強制slidev')
 
     args = parser.parse_args()
     configure_logger(args.log_level)
@@ -836,6 +1038,7 @@ def main() -> None:
     header_files = resolve_pandoc_header_files(args.header)
     marp_header_files = resolve_marp_header_files(args.marp_header)
     output_format = normalize_output_format(args.format)
+    engine: str = args.engine
 
     if args.watch is not None:
         watch_target = args.watch
@@ -851,6 +1054,7 @@ def main() -> None:
             header_files,
             marp_header_files,
             output_format,
+            engine,
         ))
 
     if args.target and args.legacy_output and not args.output:
@@ -864,6 +1068,7 @@ def main() -> None:
             header_files,
             marp_header_files,
             output_format,
+            engine,
         ))
 
     if not args.target:
@@ -877,6 +1082,7 @@ def main() -> None:
             header_files,
             marp_header_files,
             output_format,
+            engine,
         ))
 
     target_path = Path(args.target).resolve()
@@ -901,6 +1107,7 @@ def main() -> None:
             header_files,
             marp_header_files,
             output_format,
+            engine,
         ))
 
     root_dest = Path(args.output).resolve() if args.output else target_path
@@ -912,6 +1119,7 @@ def main() -> None:
         header_files,
         marp_header_files,
         output_format,
+        engine,
     ))
 
 

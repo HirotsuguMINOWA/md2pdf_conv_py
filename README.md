@@ -2,6 +2,32 @@
 
 フォルダ監視し、監視下のMarkdown/HTMLファイルに更新があれば、PDFまたはHTMLに自動変換するソフトウェアです。変換は、デフォルトはpandoc。Marp/Slidev の Markdown も扱えます。
 
+
+# 依存インストール（初回のみ）
+
+```bash
+pip install playwright
+playwright install chromium
+brew install plantuml
+```
+
+# Plan for Development
+
+## 要実装機能
+
+- CLIパラメータで各モードを実施
+- パラメータの
+  - .htmlを.pdf化
+
+## ToDo
+
+<!-- - [ ] `--auto`  -->
+
+### コード実施の流れ
+
+- [x] 監視処理前にplaywrightやplantuml等必要なパッケージがインストールされているか確認、および、installの実施
+
+
 # 問題
 
 ||Pandoc|Marp|Slidev|
@@ -16,6 +42,7 @@
 |CLIパラメータ|内容|
 |---|---|
 |`--format-input`, `--format_input`|変換対象の入力拡張子を指定(例: `.md`, `.html`)|
+|`--engine`|変換エンジンを指定(`auto` / `pandoc` / `playwright` / `marp` / `slidev`)。default=`auto`（mermaid/plantumlブロックがあれば自動的に`playwright`を使用）|
 |`--format`|出力形式を指定(`pdf`, `html`)|
 |`--watch`|変換するためフォルダ(サブフォルダ)を監視する|
 |`--header`(任意)|pandocで PDF 変換の際に使う `header.tex`|
