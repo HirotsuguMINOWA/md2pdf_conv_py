@@ -70,6 +70,7 @@ brew install plantuml
   - 主要変換処理は例外捕捉済み。さらに未捕捉例外は `__main__` で補足し、ログ出力して終了。
 - [x] PyinstallerやNuitkaでbuildできるよう実装して下さい。
   - `_resolve_repo_root()` で Nuitka / PyInstaller 実行時の実行パス解決に対応済み。
+- [ ] 本来watchdogのobserverだけで待機できるはずが、While構文で待機している。直せ。
 
 ## 変換機能
 
