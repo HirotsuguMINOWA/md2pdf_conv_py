@@ -49,6 +49,7 @@ class CommonInterface(ABC):
 
 
 DEFAULT_LOG_LEVEL = "DEBUG"
+EXCEPTION_LOG_MODE = False
 DEFAULT_OUTPUT_FORMAT = "pdf"
 DEFAULT_INPUT_EXTENSIONS: list[str] = [".md"]
 OUTPUT_EXTENSIONS: dict[str, str] = {
@@ -95,12 +96,38 @@ def sanitize_markdown_for_pandoc(markdown_text: str) -> tuple[str, bool]:
 
 
 def configure_logger(log_level: str) -> None:
+    global EXCEPTION_LOG_MODE
+    requested = (log_level or DEFAULT_LOG_LEVEL).strip().upper()
+    EXCEPTION_LOG_MODE = requested == "EXCEPTION"
+    sink_level = "ERROR" if EXCEPTION_LOG_MODE else requested
+
     logger.remove()
-    _ = logger.add(
-        sys.stderr,
-        level=log_level.upper(),
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {message}",
-    )
+    try:
+        _ = logger.add(
+            sys.stderr,
+            level=sink_level,
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {message}",
+        )
+    except ValueError:
+        # 不正なログレベルでも実行継続できるようフォールバックする
+        _ = logger.add(
+            sys.stderr,
+            level=DEFAULT_LOG_LEVEL,
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {message}",
+        )
+        logger.warning(
+            "Invalid log level '{}'. Falling back to {}.",
+            log_level,
+            DEFAULT_LOG_LEVEL,
+        )
+        EXCEPTION_LOG_MODE = False
+
+
+def log_exception_or_error(message: str, exc: Exception) -> None:
+    if EXCEPTION_LOG_MODE:
+        logger.exception("{}: {}", message, exc)
+    else:
+        logger.error("{}: {}", message, exc)
 
 
 # -------------------------------------------------------
@@ -345,6 +372,11 @@ class MarkdownConverter:
   pre {{ background: #f6f8fa; border-radius: 6px; padding: 1em; overflow-x: auto; }}
   pre code.hljs {{ background: transparent; padding: 0; }}
   .mermaid {{ text-align: center; }}
+  
+  /* 表の罫線を表示するスタイル */
+  table {{ border-collapse: collapse; border: 1px solid #000; }}
+  th, td {{ border: 1px solid #000; padding: 0.5em; }}
+  table caption {{ font-weight: bold; margin: 1em 0; }}
 </style>
 </head>
 <body>
@@ -355,6 +387,7 @@ class MarkdownConverter:
 <script>
   // mermaid コードブロックを <div class="mermaid"> に変換するカスタムレンダラー
   marked.use({{
+    gfm: true,
     renderer: {{
       code({{ text, lang }}) {{
         if (lang === 'mermaid') {{
@@ -409,7 +442,7 @@ class MarkdownConverter:
             logger.info(f"[html-template] {md_file} -> {output_file}")
             return True
         except Exception as e:
-            logger.error(f"HTML output failed: {e}")
+            log_exception_or_error("HTML output failed", e)
             return False
 
     def convert_with_playwright(self, md_file: Path, output_file: Path) -> bool:
@@ -444,7 +477,7 @@ class MarkdownConverter:
             logger.info(f"[playwright] {md_file} -> {output_file}")
             return True
         except Exception as e:
-            logger.error(f"Playwright conversion failed: {e}")
+            log_exception_or_error("Playwright conversion failed", e)
             return False
 
     def _find_chrome_binary(self) -> str | None:
@@ -477,7 +510,7 @@ class MarkdownConverter:
                     lines.append(line)
             return ''.join(lines)
         except Exception as e:
-            logger.error(f"Error reading file {md_file}: {e}")
+            log_exception_or_error(f"Error reading file {md_file}", e)
             return ''
 
     def is_marp_file(self, md_file: Path) -> bool:
@@ -598,7 +631,7 @@ class MarkdownConverter:
                 logger.error(f"Marp conversion failed: {result.stderr}")
                 return False
         except Exception as e:
-            logger.error(f"Error during marp conversion: {e}")
+            log_exception_or_error("Error during marp conversion", e)
             return False
         finally:
             if temp_md_file and temp_md_file.exists():
@@ -634,7 +667,7 @@ class MarkdownConverter:
                 logger.error(f"Slidev conversion failed: {result.stderr}")
                 return False
         except Exception as e:
-            logger.error(f"Error during slidev conversion: {e}")
+            log_exception_or_error("Error during slidev conversion", e)
             return False
 
     def convert_with_pandoc(self, md_file: Path, output_file: Path) -> bool:
@@ -692,7 +725,7 @@ class MarkdownConverter:
                 logger.error(f"Pandoc conversion failed (exit {result.returncode})")
                 return False
         except Exception as e:
-            logger.error(f"Error during pandoc conversion: {e}")
+            log_exception_or_error("Error during pandoc conversion", e)
             return False
 
     def convert_html_with_pandoc(self, html_file: Path, output_file: Path) -> bool:
@@ -743,7 +776,7 @@ class MarkdownConverter:
             logger.error(f"HTML to PDF conversion failed (exit {result.returncode})")
             return False
         except Exception as e:
-            logger.error(f"Error during HTML conversion: {e}")
+            log_exception_or_error("Error during HTML conversion", e)
             return False
 
     def convert_file_to_path(self, src_file: Path, output_file: Path) -> bool:
@@ -865,7 +898,7 @@ class MarkdownConverter:
             logger.info(f"Copied {src_file} to {dest_file}")
             return True
         except Exception as e:
-            logger.error(f"Error copying file {src_file}: {e}")
+            log_exception_or_error(f"Error copying file {src_file}", e)
             return False
 
     def should_convert(self, src_file: Path) -> bool:
@@ -874,7 +907,7 @@ class MarkdownConverter:
         try:
             md_mtime = src_file.stat().st_mtime
         except Exception as e:
-            logger.error(f"Error reading source file timestamp: {e}")
+            log_exception_or_error("Error reading source file timestamp", e)
             return True
 
         for fmt in self.output_formats:
@@ -893,7 +926,7 @@ class MarkdownConverter:
                 if should_rebuild:
                     return True
             except Exception as e:
-                logger.error(f"Error comparing timestamps for {output_file}: {e}")
+                log_exception_or_error(f"Error comparing timestamps for {output_file}", e)
                 return True
         return False
 
@@ -1116,8 +1149,9 @@ def main() -> None:
                             help=f'Output format (default: {DEFAULT_OUTPUT_FORMAT}). '
                                  f'選択肢: pdf / html / html_pdf'
                                  f'  html_pdf: md→html(mermaid/highlight対応)→pdf の2段階変換')
-    _ = parser.add_argument('--log-level', default=DEFAULT_LOG_LEVEL,
-                            help=f'Loguru log level (default: {DEFAULT_LOG_LEVEL})')
+    _ = parser.add_argument('--log-level', '--log', default=DEFAULT_LOG_LEVEL,
+                            help=f'Loguru log level (default: {DEFAULT_LOG_LEVEL}). '
+                                 'Use EXCEPTION to print traceback with logger.exception')
     _ = parser.add_argument('--copy-extensions', nargs='+',
                             default=['.png', '.jpg', '.jpeg', '.gif', '.svg'],
                             help='File extensions to copy (default: .png .jpg .jpeg .gif .svg)')
@@ -1190,17 +1224,10 @@ def main() -> None:
         sys.exit(1)
 
     if target_path.is_file():
-        root_src = target_path.parent
-        root_dest = Path(args.output).resolve() if args.output else root_src
-        if root_dest.suffix:
-            root_dest = root_dest.parent
-        logger.info(
-            "File target was provided; switching to watch mode for parent folder: {}",
-            root_src,
-        )
-        sys.exit(run_watch_mode(
-            root_src,
-            root_dest,
+        logger.info("File target was provided; running single-file conversion: {}", target_path)
+        sys.exit(run_single_file_mode(
+            target_path,
+            args.output,
             input_extensions,
             copy_extensions,
             header_files,
@@ -1223,4 +1250,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        log_exception_or_error("Fatal error", exc)
+        sys.exit(1)

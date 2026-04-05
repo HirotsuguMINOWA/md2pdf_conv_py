@@ -61,6 +61,16 @@ brew install plantuml
 - **Mermaid/PlantUML対応**: `--engine playwright` でダイアグラムを図に変換（PDF/HTML 両対応）
 
 
+
+## ToDo かつ 実装結果
+
+- [x] CLIパラメータで指定したlogレベルで表示するようにして下さい。
+  - `--log-level` に加えて `--log` も利用可能。`--log exception` 指定時は `logger.exception` でトレースバックを表示。
+- [x] エラーが期待通り表示されるように、try-except(例外処理)で主要箇所をラッピングして下さい。
+  - 主要変換処理は例外捕捉済み。さらに未捕捉例外は `__main__` で補足し、ログ出力して終了。
+- [x] PyinstallerやNuitkaでbuildできるよう実装して下さい。
+  - `_resolve_repo_root()` で Nuitka / PyInstaller 実行時の実行パス解決に対応済み。
+
 ## 変換機能
 
 ### `--format-output` の選択肢
