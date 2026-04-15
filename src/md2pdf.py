@@ -360,7 +360,7 @@ class MarkdownConverter:
         """marked.js + mermaid.js を埋め込んだ HTML 文字列を生成する"""
         if self.plantuml_cli_available:
             md_text = self._replace_plantuml_with_svg(md_text)
-        md_json = json.dumps(md_text)
+        md_json = json.dumps(md_text).replace('</', '<\\/')
         return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
