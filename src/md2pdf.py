@@ -49,13 +49,15 @@ class CommonInterface(ABC):
 
 
 DEFAULT_LOG_LEVEL = "DEBUG"
-EXCEPTION_LOG_MODE = False
+EXCEPTION_LOG_MODE: bool = False
 DEFAULT_OUTPUT_FORMAT = "pdf"
 DEFAULT_INPUT_EXTENSIONS: list[str] = [".md"]
 OUTPUT_EXTENSIONS: dict[str, str] = {
     "pdf": ".pdf",
     "html": ".html",
-    "html_pdf": ".pdf",  # md→html（中間）→pdf の2段階変換。出力拡張子は .pdf
+    "docx": ".docx",
+    "html_pdf": ".pdf",   # md→html（中間）→pdf
+    "html_docx": ".docx", # md→html + docx
 }
 SUPPORTED_INPUT_EXTENSIONS: set[str] = {".md", ".html"}
 
@@ -495,6 +497,112 @@ class MarkdownConverter:
         logger.warning("Chrome/Chromium not found. HTML to PDF conversion is unavailable.")
         return None
 
+    def get_output_extension(self) -> str:
+        return OUTPUT_EXTENSIONS[self.output_format]
+
+    def get_dest_path(self, src_file: Path, extension: str | None = None) -> Path:
+        src_path = Path(src_file).resolve()
+        try:
+            relative_path = src_path.relative_to(self.root_src.resolve())
+        except Exception:
+            relative_path = Path(src_path.name)
+
+        if extension is not None:
+            relative_path = relative_path.with_suffix(extension)
+
+        return self.root_dest / relative_path
+
+    def ensure_dest_dir(self, output_file: Path) -> None:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def replicate_folder_structure(self) -> None:
+        self.root_dest.mkdir(parents=True, exist_ok=True)
+        for directory in self.root_src.rglob('*'):
+            if directory.is_dir():
+                try:
+                    relative_dir = directory.resolve().relative_to(self.root_src.resolve())
+                except Exception:
+                    relative_dir = Path(directory.name)
+                dest_dir = self.root_dest / relative_dir
+                dest_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug("Replicated folder structure: {} -> {}", self.root_src, self.root_dest)
+
+    def copy_file(self, src_file: Path) -> bool:
+        try:
+            dest_file = self.get_dest_path(src_file)
+            self.ensure_dest_dir(dest_file)
+            shutil.copy2(src_file, dest_file)
+            logger.info("[copy] {} -> {}", src_file, dest_file)
+            return True
+        except Exception as e:
+            log_exception_or_error("File copy failed", e)
+            return False
+
+    def convert_file_to_path(self, src_file: Path, output_file: Path) -> bool:
+        self.ensure_dest_dir(output_file)
+        suffix = src_file.suffix.lower()
+
+        if suffix == '.html':
+            if self.output_format == 'html':
+                try:
+                    shutil.copy2(src_file, output_file)
+                    logger.info("[html-copy] {} -> {}", src_file, output_file)
+                    return True
+                except Exception as e:
+                    log_exception_or_error("HTML copy failed", e)
+                    return False
+            return self.convert_html_with_pandoc(src_file, output_file)
+
+        if suffix != '.md':
+            logger.error("Unsupported source file: {}", src_file)
+            return False
+
+        if self.output_format == 'html':
+            return self.convert_to_html(src_file, output_file)
+
+        if self.engine == 'pandoc':
+            return self.convert_with_pandoc(src_file, output_file)
+
+        if self.engine == 'playwright':
+            if self.output_format == 'pdf':
+                return self.convert_with_playwright(src_file, output_file)
+            return self.convert_with_pandoc(src_file, output_file)
+
+        if self.engine == 'marp':
+            if self.output_format in {'pdf', 'html'}:
+                return self.convert_with_marp(src_file, output_file)
+            logger.warning(
+                "marp engine does not support {} directly; falling back to pandoc",
+                self.output_format,
+            )
+            return self.convert_with_pandoc(src_file, output_file)
+
+        if self.engine == 'slidev':
+            if self.output_format == 'pdf':
+                return self.convert_with_slidev(src_file, output_file)
+            logger.warning(
+                "slidev engine does not support {} directly; falling back to pandoc",
+                self.output_format,
+            )
+            return self.convert_with_pandoc(src_file, output_file)
+
+        # auto
+        if self.is_marp_file(src_file) and self.marp_available and self.output_format in {'pdf', 'html'}:
+            return self.convert_with_marp(src_file, output_file)
+
+        if self.is_slidev_file(src_file) and self.slidev_available and self.output_format == 'pdf':
+            return self.convert_with_slidev(src_file, output_file)
+
+        if self.output_format == 'pdf' and self.playwright_available:
+            try:
+                md_text = src_file.read_text(encoding='utf-8')
+                if has_diagram_blocks(md_text):
+                    return self.convert_with_playwright(src_file, output_file)
+            except Exception as e:
+                log_exception_or_error("Error reading markdown before engine selection", e)
+
+        return self.convert_with_pandoc(src_file, output_file)
+
     # -------------------------------------------------------
     # ファイル種別判定
     # -------------------------------------------------------
@@ -537,7 +645,7 @@ class MarkdownConverter:
     # 変換処理
     # -------------------------------------------------------
     def _normalize_marp_header_fragment(self, text: str) -> str:
-        """Marp に挿入する frontmatter 断片を正規化する。"""
+        """Marp に挿入する frontmatter 斉断片を正規化する。"""
         stripped = text.lstrip('\ufeff').strip()
         if not stripped:
             return ''
@@ -692,9 +800,14 @@ class MarkdownConverter:
                         'Replaced problematic Unicode emoji sequences before pandoc conversion: {}',
                         md_file,
                     )
+
+            elif self.output_format == 'docx':
+                cmd.extend([
+                    '--resource-path', str(md_file.parent),
+                ])
+
             else:
                 # HTML出力時: PlantUML ブロックを inline SVG に変換してから pandoc へ渡す
-                # (pandoc は raw HTML を --standalone HTML にそのまま埋め込む)
                 if self.plantuml_cli_available:
                     markdown_input = self._replace_plantuml_with_svg(markdown_input)
                 cmd.extend([
@@ -729,9 +842,39 @@ class MarkdownConverter:
             return False
 
     def convert_html_with_pandoc(self, html_file: Path, output_file: Path) -> bool:
-        """HTML は Chrome/Chromium の headless print で PDF に変換する。"""
+        """HTML 入力を PDF または DOCX に変換する。"""
+        if self.output_format == 'docx':
+            try:
+                cmd = [
+                    PANDOC,
+                    str(html_file),
+                    '--resource-path', str(html_file.parent),
+                    '-o', str(output_file),
+                ]
+                logger.debug("Running pandoc for HTML -> DOCX: {}", cmd)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    cwd=str(html_file.parent),
+                )
+                if result.stdout:
+                    print(result.stdout, end='')
+                if result.stderr:
+                    print(result.stderr, end='', file=sys.stderr)
+                if result.returncode == 0:
+                    logger.info(f"[html-docx] {html_file} -> {output_file}")
+                    return True
+
+                logger.error(f"HTML to DOCX conversion failed (exit {result.returncode})")
+                return False
+            except Exception as e:
+                log_exception_or_error("Error during HTML -> DOCX conversion", e)
+                return False
+
         if self.output_format != 'pdf':
-            logger.error("HTML input only supports PDF output: {}", html_file)
+            logger.error("HTML input only supports PDF or DOCX output: {}", html_file)
             return False
 
         try:
@@ -763,7 +906,7 @@ class MarkdownConverter:
                     text=True,
                     encoding='utf-8',
                     cwd=str(html_file.parent),
-                    timeout=50  # !これが無いと新しい変換されない
+                    timeout=50
                 )
             if result.stdout:
                 print(result.stdout, end='')
@@ -779,49 +922,27 @@ class MarkdownConverter:
             log_exception_or_error("Error during HTML conversion", e)
             return False
 
-    def convert_file_to_path(self, src_file: Path, output_file: Path) -> bool:
-        """入力種別に応じて変換ツールを自動選択して指定パスへ変換する。"""
-        self.ensure_dest_dir(output_file)
-        logger.debug("Converting file {} -> {}", src_file, output_file)
-
-        if src_file.suffix == '.html':
-            return self.convert_html_with_pandoc(src_file, output_file)
-
-        if self.engine == 'marp':
-            return self.convert_with_marp(src_file, output_file)
-        if self.engine == 'slidev':
-            return self.convert_with_slidev(src_file, output_file)
-        if self.engine == 'playwright':
-            if self.output_format == 'pdf':
-                return self.convert_with_playwright(src_file, output_file)
-            return self.convert_to_html(src_file, output_file)
-        if self.engine == 'pandoc':
-            return self.convert_with_pandoc(src_file, output_file)
-        # engine == 'auto': 自動判定
-        if self.marp_available and self.is_marp_file(src_file):
-            return self.convert_with_marp(src_file, output_file)
-        if self.slidev_available and self.is_slidev_file(src_file):
-            return self.convert_with_slidev(src_file, output_file)
-        if self.playwright_available:
-            if self.output_format == 'pdf':
-                md_text = src_file.read_text(encoding='utf-8')
-                if has_diagram_blocks(md_text):
-                    return self.convert_with_playwright(src_file, output_file)
-            elif self.output_format == 'html':
-                return self.convert_to_html(src_file, output_file)
-        return self.convert_with_pandoc(src_file, output_file)
-
-    def get_output_extension(self) -> str:
-        extension = OUTPUT_EXTENSIONS[self.output_format]
-        logger.debug("Resolved output extension for format {}: {}", self.output_format, extension)
-        return extension
+    def _get_output_paths_for_format(self, src_file: Path, fmt: str) -> list[Path]:
+        if fmt == 'html_pdf':
+            return [
+                self.get_dest_path(src_file, '.html'),
+                self.get_dest_path(src_file, '.pdf'),
+            ]
+        if fmt == 'html_docx':
+            return [
+                self.get_dest_path(src_file, '.html'),
+                self.get_dest_path(src_file, '.docx'),
+            ]
+        return [self.get_dest_path(src_file, OUTPUT_EXTENSIONS[fmt])]
 
     def convert_markdown(self, md_file: Path) -> bool:
-        """変換ツールを自動選択して指定形式に変換（marp > slidev > pandoc）。"""
+        """変換ツールを自動選択して指定形式に変換。"""
         all_ok = True
         for fmt in self.output_formats:
             if fmt == 'html_pdf':
                 ok = self._convert_md_via_html_to_pdf(md_file)
+            elif fmt == 'html_docx':
+                ok = self._convert_md_to_html_and_docx(md_file)
             else:
                 self.output_format = fmt
                 output_file = self.get_dest_path(md_file, self.get_output_extension())
@@ -831,12 +952,10 @@ class MarkdownConverter:
         return all_ok
 
     def _convert_md_via_html_to_pdf(self, md_file: Path) -> bool:
-        """md → html（中間ファイル）→ pdf の2段階変換。
-        中間 HTML は出力フォルダに .html として保存し、それを Chrome で PDF 化する。"""
+        """md → html（中間ファイル）→ pdf の2段階変換。"""
         html_output = self.get_dest_path(md_file, '.html')
         pdf_output = self.get_dest_path(md_file, '.pdf')
 
-        # Step1: md → html
         self.output_format = 'html'
         self.ensure_dest_dir(html_output)
         ok_html = self.convert_to_html(md_file, html_output)
@@ -844,7 +963,6 @@ class MarkdownConverter:
             logger.error(f"html_pdf mode: HTML generation failed: {md_file}")
             return False
 
-        # Step2: html → pdf（Chrome headless）
         self.output_format = 'pdf'
         self.ensure_dest_dir(pdf_output)
         ok_pdf = self.convert_html_with_pandoc(html_output, pdf_output)
@@ -852,58 +970,27 @@ class MarkdownConverter:
             logger.error(f"html_pdf mode: PDF generation failed: {html_output}")
         return ok_pdf
 
-    def convert_markdown_to_pdf(self, md_file: Path) -> bool:
-        """後方互換用。現在の output_formats に従って変換する。"""
-        return self.convert_markdown(md_file)
+    def _convert_md_to_html_and_docx(self, md_file: Path) -> bool:
+        """md → html + docx の2出力。"""
+        html_output = self.get_dest_path(md_file, '.html')
+        docx_output = self.get_dest_path(md_file, '.docx')
 
-    # -------------------------------------------------------
-    # パス・ディレクトリ操作
-    # -------------------------------------------------------
-    def get_relative_path(self, file_path: Path) -> Path:
-        relative_path = file_path.relative_to(self.root_src)
-        logger.debug("Resolved relative path {} -> {}", file_path, relative_path)
-        return relative_path
-
-    def get_dest_path(self, src_path: Path, new_extension: str | None = None) -> Path:
-        rel_path = self.get_relative_path(src_path)
-        if new_extension is not None:
-            rel_path = rel_path.with_suffix(new_extension)
-        dest_path = self.root_dest / rel_path
-        logger.debug("Resolved destination path {} -> {}", src_path, dest_path)
-        return dest_path
-
-    def ensure_dest_dir(self, dest_path: Path) -> None:
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.debug("Ensured parent directory exists: {}", dest_path.parent)
-
-    def replicate_folder_structure(self) -> None:
-        """フォルダ構造を複製"""
-        logger.debug("Replicating folder structure from {} to {}", self.root_src, self.root_dest)
-        for dir_path in self.root_src.rglob('*'):
-            if dir_path.is_dir():
-                dest_dir = self.get_dest_path(dir_path)
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                logger.debug("Ensured mirrored directory exists: {}", dest_dir)
-
-    # -------------------------------------------------------
-    # ファイルコピー・タイムスタンプ
-    # -------------------------------------------------------
-    def copy_file(self, src_file: Path) -> bool:
-        """指定された拡張子のファイルをコピー"""
-        dest_file = self.get_dest_path(src_file)
-        self.ensure_dest_dir(dest_file)
-        try:
-            logger.debug("Copying asset file {} -> {}", src_file, dest_file)
-            _ = shutil.copy2(src_file, dest_file)
-            logger.info(f"Copied {src_file} to {dest_file}")
-            return True
-        except Exception as e:
-            log_exception_or_error(f"Error copying file {src_file}", e)
+        self.output_format = 'html'
+        self.ensure_dest_dir(html_output)
+        ok_html = self.convert_to_html(md_file, html_output)
+        if not ok_html:
+            logger.error(f"html_docx mode: HTML generation failed: {md_file}")
             return False
 
+        self.output_format = 'docx'
+        self.ensure_dest_dir(docx_output)
+        ok_docx = self.convert_with_pandoc(md_file, docx_output)
+        if not ok_docx:
+            logger.error(f"html_docx mode: DOCX generation failed: {md_file}")
+        return ok_docx
+
     def should_convert(self, src_file: Path) -> bool:
-        """変換が必要かどうか判定（全出力フォーマットのタイムスタンプ比較）。
-        いずれかの出力が存在しない、または10秒以上古ければ変換する。"""
+        """変換が必要かどうか判定。"""
         try:
             md_mtime = src_file.stat().st_mtime
         except Exception as e:
@@ -911,23 +998,22 @@ class MarkdownConverter:
             return True
 
         for fmt in self.output_formats:
-            ext = OUTPUT_EXTENSIONS[fmt]
-            output_file = self.get_dest_path(src_file, ext)
-            if not output_file.exists():
-                logger.debug("Destination output does not exist yet, converting: {}", output_file)
-                return True
-            try:
-                output_mtime = output_file.stat().st_mtime
-                should_rebuild = (md_mtime - output_mtime) > 10
-                logger.debug(
-                    "Timestamp comparison for {} ({}): src_mtime={}, output_mtime={}, should_convert={}",
-                    src_file, fmt, md_mtime, output_mtime, should_rebuild,
-                )
-                if should_rebuild:
+            for output_file in self._get_output_paths_for_format(src_file, fmt):
+                if not output_file.exists():
+                    logger.debug("Destination output does not exist yet, converting: {}", output_file)
                     return True
-            except Exception as e:
-                log_exception_or_error(f"Error comparing timestamps for {output_file}", e)
-                return True
+                try:
+                    output_mtime = output_file.stat().st_mtime
+                    should_rebuild = (md_mtime - output_mtime) > 10
+                    logger.debug(
+                        "Timestamp comparison for {} ({} -> {}): src_mtime={}, output_mtime={}, should_convert={}",
+                        src_file, fmt, output_file, md_mtime, output_mtime, should_rebuild,
+                    )
+                    if should_rebuild:
+                        return True
+                except Exception as e:
+                    log_exception_or_error(f"Error comparing timestamps for {output_file}", e)
+                    return True
         return False
 
     def process_file(self, file_path: str | Path) -> None:
@@ -1147,11 +1233,12 @@ def main() -> None:
                             choices=sorted(OUTPUT_EXTENSIONS),
                             default=DEFAULT_OUTPUT_FORMAT,
                             help=f'Output format (default: {DEFAULT_OUTPUT_FORMAT}). '
-                                 f'選択肢: pdf / html / html_pdf'
-                                 f'  html_pdf: md→html(mermaid/highlight対応)→pdf の2段階変換')
+                            f'選択肢: pdf / html / docx / html_pdf / html_docx '
+                            f'html_pdf: md→html(mermaid/highlight対応)→pdf の2段階変換 '
+                            f'html_docx: md→html + docx を同時出力')
     _ = parser.add_argument('--log-level', '--log', default=DEFAULT_LOG_LEVEL,
                             help=f'Loguru log level (default: {DEFAULT_LOG_LEVEL}). '
-                                 'Use EXCEPTION to print traceback with logger.exception')
+                            'Use EXCEPTION to print traceback with logger.exception')
     _ = parser.add_argument('--copy-extensions', nargs='+',
                             default=['.png', '.jpg', '.jpeg', '.gif', '.svg'],
                             help='File extensions to copy (default: .png .jpg .jpeg .gif .svg)')

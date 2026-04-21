@@ -4,3 +4,4 @@ pandoc-mermaid-selenium-filter
 pyinstaller
 pandoc
 loguru
+pypandoc
