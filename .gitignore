@@ -1,3 +1,6 @@
+# Built files for Nuitka
+built_nuitka/*
+
 *.build
 *.dist
 *.onefile-build
