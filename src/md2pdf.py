@@ -1230,12 +1230,12 @@ def main() -> None:
     _ = parser.add_argument('--marp-header', action='append', default=[],
                             help='Markdown/YAML fragment file to inject into Marp frontmatter (repeatable)')
     _ = parser.add_argument('--format-output', '--format_output',
+                            action='append',
                             choices=sorted(OUTPUT_EXTENSIONS),
-                            default=DEFAULT_OUTPUT_FORMAT,
-                            help=f'Output format (default: {DEFAULT_OUTPUT_FORMAT}). '
-                            f'選択肢: pdf / html / docx / html_pdf / html_docx '
-                            f'html_pdf: md→html(mermaid/highlight対応)→pdf の2段階変換 '
-                            f'html_docx: md→html + docx を同時出力')
+                            default=[],
+                            help=f'Output format (repeatable). '
+                            f'選択肢: pdf / html / docx '
+                            f'例: --format-output=html --format-output=pdf で html と pdf の両方を出力')
     _ = parser.add_argument('--log-level', '--log', default=DEFAULT_LOG_LEVEL,
                             help=f'Loguru log level (default: {DEFAULT_LOG_LEVEL}). '
                             'Use EXCEPTION to print traceback with logger.exception')
@@ -1257,7 +1257,9 @@ def main() -> None:
     input_extensions = normalize_input_extensions(args.format_input)
     header_files = resolve_pandoc_header_files(args.header)
     marp_header_files = resolve_marp_header_files(args.marp_header)
-    output_formats = normalize_output_formats([args.format_output])
+    # format_output のデフォルト値を処理
+    format_output_list = args.format_output if args.format_output else [DEFAULT_OUTPUT_FORMAT]
+    output_formats = normalize_output_formats(format_output_list)
     engine: str = args.engine
 
     if args.watch is not None:
