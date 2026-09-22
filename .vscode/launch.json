@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "監視開始[JS入門]",
+            "name": "[Dev]監視開始[JS入門]",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/src/md2pdf.py",

@@ -1,6 +1,14 @@
-# Markdown to PDF Converter
+# Markdown to pdf/html Converter
 
 フォルダ監視し、監視下のMarkdown/HTMLファイルに更新があれば、PDFまたはHTMLに自動変換するソフトウェアです。変換は、デフォルトはpandoc。Marp/Slidev の Markdown も扱えます。
+
+# Install
+
+## pipx
+- `pipx install md2pdf`
+  - Your can run `md2pdf` after the above command.
+
+
 
 
 # 依存インストール（初回のみ）
@@ -8,7 +16,7 @@
 ```bash
 pip install playwright
 playwright install chromium
-brew install plantuml
+brew install plantuml pandoc
 ```
 
 # Plan for Development
@@ -30,23 +38,23 @@ brew install plantuml
 
 # 問題
 
-||Pandoc|Marp|Slidev|
-|---|---|---|---|---|
-|mermaild|N|**Y**|?||
-|PG code|N|**Y**|?||
+|          | Pandoc | Marp  | Slidev |
+| -------- | ------ | ----- | ------ |
+| mermaild | N      | **Y** | ?      |
+| PG code  | N      | **Y** | ?      |
 
 - MPE: Markdown 
 
 ## CLIパラメータ
 
-|CLIパラメータ|内容|
-|---|---|
-|`--format-input`, `--format_input`|変換対象の入力拡張子を指定(例: `.md`, `.html`)|
-|`--engine`|変換エンジンを指定(`auto` / `pandoc` / `playwright` / `marp` / `slidev`)。default=`auto`（mermaid/plantumlブロックがあれば自動的に`playwright`を使用）|
-|`--format-output`, `--format_output`|出力形式を指定。選択肢: `pdf` / `html` / `html_pdf`。デフォルト: `html_pdf`|
-|`--watch`|変換するためフォルダ(サブフォルダ)を監視する|
-|`--header`(任意)|pandocで PDF 変換の際に使う `header.tex`|
-|`--marp-header`(任意)|Marp frontmatter に追加する YAML/Markdown 断片|
+| CLIパラメータ                        | 内容                                                                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--format-input`, `--format_input`   | 変換対象の入力拡張子を指定(例: `.md`, `.html`)                                                                                                         |
+| `--engine`                           | 変換エンジンを指定(`auto` / `pandoc` / `playwright` / `marp` / `slidev`)。default=`auto`（mermaid/plantumlブロックがあれば自動的に`playwright`を使用） |
+| `--format-output`, `--format_output` | 出力形式を指定。選択肢: `pdf` / `html` / `docx`。デフォルト: `html`                                                                                    |
+| `--watch`                            | 変換するためフォルダ(サブフォルダ)を監視する                                                                                                           |
+| `--header`(任意)                     | pandocで PDF 変換の際に使う `header.tex`                                                                                                               |
+| `--marp-header`(任意)                | Marp frontmatter に追加する YAML/Markdown 断片                                                                                                         |
 
 
 
@@ -76,10 +84,10 @@ brew install plantuml
 
 ### `--format-output` の選択肢
 
-| 値 | 動作 |
-| --- | --- |
-| `pdf` | md → PDF（pandoc/marp/slidev/playwright で変換） |
-| `html` | md → HTML（playwright 使用時は mermaid.js + highlight.js 入りブラウザ対応 HTML） |
+| 値         | 動作                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------ |
+| `pdf`      | md → PDF（pandoc/marp/slidev/playwright で変換）                                     |
+| `html`     | md → HTML（playwright 使用時は mermaid.js + highlight.js 入りブラウザ対応 HTML）     |
 | `html_pdf` | md → HTML（mermaid/highlight対応）→ PDF の2段階変換。HTML も出力フォルダに保存される |
 
 ### html→PDF

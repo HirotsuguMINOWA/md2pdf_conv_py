@@ -1,0 +1,105 @@
+# =============================================================================
+# md2pdf.py - Markdown/HTML ファイルを PDF/HTML/DOCX へ変換する CLI アプリ
+#
+# 本ファイルには、
+#   (1) 「main 関数から起動する CLI アプリ化」のためのエントリポイント定義
+#   (2) requirements.txt から移管した依存関係
+# を記載しています。
+# =============================================================================
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md2pdf"
+version = "0.1.0"
+description = "Markdown/HTML converter with folder monitoring (pandoc / marp / slidev / playwright)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [
+    { name = "hirots-m" },
+]
+keywords = ["markdown", "pdf", "html", "docx", "converter", "pandoc", "marp", "slidev"]
+
+# -----------------------------------------------------------------------------
+# (2) requirements.txt から移管した依存関係
+# -----------------------------------------------------------------------------
+dependencies = [
+    "watchdog>=3.0.0",
+    "pandoc-mermaid-selenium-filter",
+    "pyinstaller",
+    "pandoc",
+    "loguru",
+    "pypandoc",
+]
+
+[project.optional-dependencies]
+playwright = [
+    "playwright>=1.40.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/hirots-m/md2pdf.py"
+
+# -----------------------------------------------------------------------------
+# (1) main 関数から起動する CLI アプリ化
+#
+# 起動方法:
+#   $ pip install .            (または pip install -e . で開発インストール)
+#   $ md2pdf --help
+#   $ md2pdf ./markdown_files ./pdf_output
+#   $ md2pdf --watch ./source --output ./pdf_output --format-input .md .html
+#
+# エントリポイント `md2pdf = "md2pdf:main"` は、
+# src/md2pdf.py をモジュール名 `md2pdf` としてインストールし、
+# その main() を呼び出すものです。
+# -----------------------------------------------------------------------------
+
+[project.scripts]
+# CLI コマンド名 -> モジュール:関数
+# `pip install .` 後に `md2pdf` を実行すると src/md2pdf.py の main() が起動する
+md2pdf = "md2pdf:main"
+
+# 既存の直接起動 `python src/md2pdf.py` と同義の別コマンド (任意)
+md2pdf-py = "md2pdf:main"
+
+# -----------------------------------------------------------------------------
+# setuptools によるパッケージ配置 (単一ファイル src/md2pdf.py を公開)
+#
+# py-modules   : 公開する単一モジュール名リスト (拡張子なし)
+#                "md2pdf" -> package-dir の指定先ディレクトリから
+#                            md2pdf.py をモジュール `md2pdf` として配置
+#
+# package-dir  : モジュールの取得先ディレクトリを "src" に指定。
+#                これにより setuptools は src/md2pdf.py を
+#                モジュール `md2pdf` として site-packages にコピーする。
+#
+# ※ 注意: 既存の直接起動 `python src/md2pdf.py` は引き続き動作します。
+# -----------------------------------------------------------------------------
+[tool.setuptools]
+py-modules = ["md2pdf"]
+package-dir = { "" = "src" }
+
+# -----------------------------------------------------------------------------
+# 開発者向け設定 (任意)
+# -----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
