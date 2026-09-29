@@ -363,11 +363,14 @@ class MarkdownConverter:
         if self.plantuml_cli_available:
             md_text = self._replace_plantuml_with_svg(md_text)
         md_json = json.dumps(md_text).replace('</', '<\\/')
-        return f"""<!DOCTYPE html>
+        return rf"""<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <style>
   body {{ font-family: "Hiragino Kaku Gothic ProN", sans-serif;
           max-width: 900px; margin: 0 auto; padding: 2em; }}
@@ -401,16 +404,63 @@ class MarkdownConverter:
   }});
 
   const md = {md_json};
-  document.getElementById('content').innerHTML = marked.parse(md);
+  const content = document.getElementById('content');
+
+  // コードブロック内の $ を KaTeX に誤認識されないよう、
+  // 一時的にプレースホルダに置き換えて marked.parse する。
+  // ─ (U+2500) をプレースホルダの境界文字として使用。
+  var U2500 = String.fromCharCode(0x2500);
+  var PH_START = U2500 + 'CODEBLOCKSTART' + U2500;
+  var PH_END = U2500 + 'CODEBLOCKEND' + U2500;
+  var savedBlocks = [];
+  var mdForParse = md.replace(/```([\s\S]*?)```/g, function(m) {{
+    savedBlocks.push(m);
+    return PH_START + (savedBlocks.length - 1) + PH_END;
+  }});
+
+  content.innerHTML = marked.parse(mdForParse);
+
+  // コードブロックを HTML 化して復元（\d+ は JS 正規表現で 1 バックスラッシュ）
+  var BS = '\\';
+  var codeRe = new RegExp(PH_START + '(' + BS + 'd+)' + PH_END, 'g');
+  content.innerHTML = content.innerHTML.replace(codeRe, function(_, idx) {{
+    return marked.parse(savedBlocks[parseInt(idx, 10)]);
+  }});
 
   // シンタックスハイライト（mermaid 以外のコードブロック）
-  document.querySelectorAll('pre code').forEach(function(el) {{
-    hljs.highlightElement(el);
-  }});
+  // 注: hljs の CDN URL が 404 の場合があるため、try-catch で保護。
+  try {{
+    document.querySelectorAll('pre code').forEach(function(el) {{
+      hljs.highlightElement(el);
+    }});
+  }} catch(e) {{
+    console.error('hljs highlighting error:', e);
+  }}
+
+  // KaTeX で数式を描画（code / pre 内の $ は auto-render が除外）
+  // delimiter の BS + '[' は JS で '\[' になり、auto-render 内部で
+  // escape されて '\\[' → '\[' として LaTeX の \[ に対応。
+  try {{
+    if (typeof renderMathInElement === 'function') {{
+      renderMathInElement(content, {{
+        delimiters: [
+          {{ left: '$$', right: '$$', display: true }},
+          {{ left: '$', right: '$', display: false }},
+          {{ left: BS + '[', right: BS + ']', display: true }},
+          {{ left: BS + '(', right: BS + ')', display: false }}
+        ],
+        throwOnError: false
+      }});
+    }}
+  }} catch(e) {{
+    console.error('KaTeX rendering error:', e);
+  }}
 
   // スクリプト読み込みエラーや mermaid 描画エラー時でも必ず data-ready をセット
   function markReady() {{
-    document.body.setAttribute('data-ready', 'true');
+    requestAnimationFrame(function() {{
+      document.body.setAttribute('data-ready', 'true');
+    }});
   }}
 
   // 最大 25 秒でフォールバック（wait_for_selector の 30 秒より短く設定）
