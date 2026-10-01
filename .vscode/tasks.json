@@ -1,0 +1,90 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build (Nuitka) md2pdf",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/build_by_nuitka_md2pdf.sh"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "detail": "build_by_nuitka_md2pdf.sh を実行 (Nuitka onefile+standalone ビルド)"
+        },
+        {
+            "label": "Build (PyInstaller) md2pdf",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/build_by_pyinstaller_md2pdf.sh"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "detail": "build_by_pyinstaller_md2pdf.sh を実行 (PyInstaller onefile ビルド)"
+        },
+        {
+            "label": "Build (PyInstaller) chrome_md2pdf",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/build_by_pyinstaller_chrome_md2pdf.sh"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "detail": "build_by_pyinstaller_chrome_md2pdf.sh を実行 (Chrome版 PyInstaller ビルド)"
+        },
+        {
+            "label": "Run (pkg) md2pdf watch",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/run_pkg_md2pdf.sh"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "detail": "run_pkg_md2pdf.sh を実行 (dist/md2pdf の watch モード。長期間実行される)"
+        }
+    ]
+}
