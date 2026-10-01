@@ -102,7 +102,7 @@ Homepage = "https://github.com/hirots-m/md2pdf.py"
 # 起動例:
 #   $ md2pdf --help
 #   $ md2pdf ./markdown_files ./pdf_output
-#   $ md2pdf --watch ./source --output ./pdf_output --format-input .md .html
+#   $ md2pdf --watch ./source --output ./pdf_output --input-pattern "*.md" "*.html"
 #   $ md2pdf ./doc.md --format-output=pdf --format-output=html
 #
 # エントリポイント `md2pdf = "md2pdf:main"` は、

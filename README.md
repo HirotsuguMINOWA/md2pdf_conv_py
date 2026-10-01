@@ -49,7 +49,7 @@ brew install plantuml pandoc
 
 | CLIパラメータ                        | 内容                                                                                                                                                   |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--format-input`, `--format_input`   | 変換対象の入力拡張子を指定(例: `.md`, `.html`)                                                                                                         |
+| `--input-pattern`, `--input_pattern` | ファイル名を正規表現（または glob 的な `*`）で指定。複数可。default=`*.md`。例: `".md"` ですべての .md、`"*_marp.md"` で _marp.md 末尾のファイルだけ |
 | `--engine`                           | 変換エンジンを指定(`auto` / `pandoc` / `playwright` / `marp` / `slidev`)。default=`auto`（mermaid/plantumlブロックがあれば自動的に`playwright`を使用） |
 | `--format-output`, `--format_output` | 出力形式を指定。選択肢: `pdf` / `html` / `docx`。デフォルト: `html`                                                                                    |
 | `--watch`                            | 変換するためフォルダ(サブフォルダ)を監視する                                                                                                           |
@@ -156,7 +156,7 @@ python src/md2pdf.py ./markdown_files ./pdf_output
 ```
 
 ### オプション
-- `--format-input`: 変換対象の入力拡張子を指定（デフォルト: `.md`）
+- `--input-pattern`: ファイル名を正規表現（または glob 的な `*`）で指定。複数可。デフォルト: `*.md`
 - `--format`: 出力形式を指定（デフォルト: `pdf`）
 - `--copy-extensions`: コピーするファイルの拡張子を指定（デフォルト: .png .jpg .jpeg .gif .svg）
 
@@ -167,26 +167,26 @@ python src/md2pdf.py ./markdown_files ./pdf_output --copy-extensions .png .jpg .
 Markdown と HTML の両方を監視して PDF 化する例:
 
 ```bash
-python src/md2pdf.py ./source ./pdf_output --format-input .md .html --format pdf
+python src/md2pdf.py ./source ./pdf_output --input-pattern "*.md" "*.html" --format pdf
 ```
 
 単一の HTML ファイルを PDF 化する例:
 
 ```bash
-python src/md2pdf.py ./source/sample.html --output ./pdf_output/sample.pdf --format-input .html --format pdf
+python src/md2pdf.py ./source/sample.html --output ./pdf_output/sample.pdf --input-pattern "*.html" --format pdf
 ```
 
 VS Code タスクやシェルから絶対パスで起動する場合は、次のいずれかを使ってください。
 
 ```bash
-python /absolute/path/to/src/md2pdf.py --watch /path/to/source --output /path/to/output --format-input html --format pdf
+python /absolute/path/to/src/md2pdf.py --watch /path/to/source --output /path/to/output --input-pattern "*.html" --format pdf
 ```
 
 または、`src/md2pdf.py` に実行権限を付けたうえで直接起動します。
 
 ```bash
 chmod +x /absolute/path/to/src/md2pdf.py
-/absolute/path/to/src/md2pdf.py --watch /path/to/source --output /path/to/output --format-input html --format pdf
+/absolute/path/to/src/md2pdf.py --watch /path/to/source --output /path/to/output --input-pattern "*.html" --format pdf
 ```
 
 ## 動作の流れ

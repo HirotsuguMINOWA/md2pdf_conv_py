@@ -51,7 +51,7 @@ class CommonInterface(ABC):
 DEFAULT_LOG_LEVEL = "DEBUG"
 EXCEPTION_LOG_MODE: bool = False
 DEFAULT_OUTPUT_FORMAT = "pdf"
-DEFAULT_INPUT_EXTENSIONS: list[str] = [".md"]
+DEFAULT_INPUT_PATTERNS: list[str] = ["*.md"]
 OUTPUT_EXTENSIONS: dict[str, str] = {
     "pdf": ".pdf",
     "html": ".html",
@@ -193,7 +193,7 @@ MARP_BIN: Path = _get_marp_binary()
 class MarkdownConverter:
     root_src: Path
     root_dest: Path
-    input_extensions: list[str]
+    input_patterns: list[re.Pattern]
     copy_extensions: list[str]
     header_files: list[str]
     marp_header_files: list[str]
@@ -203,7 +203,7 @@ class MarkdownConverter:
     output_format: str  # 変換中の現在フォーマット（convert_markdown内でセット）
 
     def __init__(self, root_src: str, root_dest: str,
-                 input_extensions: list[str] | None = None,
+                 input_patterns: list[str] | None = None,
                  copy_extensions: list[str] | None = None,
                  header_files: list[str] | None = None,
                  marp_header_files: list[str] | None = None,
@@ -211,7 +211,7 @@ class MarkdownConverter:
                  engine: str = 'auto') -> None:
         self.root_src = Path(root_src)
         self.root_dest = Path(root_dest)
-        self.input_extensions = normalize_input_extensions(input_extensions)
+        self.input_patterns = normalize_input_patterns(input_patterns)
         self.copy_extensions = copy_extensions or ['.png', '.jpg', '.jpeg', '.gif', '.svg']
         self.header_files = header_files or [DEFAULT_HEADER_TEX]
         self.marp_header_files = marp_header_files or []
@@ -219,10 +219,10 @@ class MarkdownConverter:
         self.output_format = self.output_formats[0]  # 内部処理用の現在値
         self.engine = engine
         logger.debug(
-            "Initializing MarkdownConverter: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
+            "Initializing MarkdownConverter: root_src={}, root_dest={}, input_patterns={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
             self.root_src,
             self.root_dest,
-            self.input_extensions,
+            [p.pattern for p in self.input_patterns],
             self.copy_extensions,
             self.header_files,
             self.marp_header_files,
@@ -1070,7 +1070,7 @@ class MarkdownConverter:
         """ファイルを処理"""
         p = Path(file_path)
         logger.debug("Processing filesystem path: {}", p)
-        if p.suffix in self.input_extensions:
+        if p.suffix in SUPPORTED_INPUT_EXTENSIONS and self.matches_input_pattern(p):
             if self.should_convert(p):
                 _ = self.convert_markdown(p)
             else:
@@ -1079,6 +1079,11 @@ class MarkdownConverter:
             _ = self.copy_file(p)
         else:
             logger.debug("Skipping unsupported file type: {}", p)
+
+    def matches_input_pattern(self, path: Path) -> bool:
+        """ファイル名が変換対象パターン（正規表現）のいずれかにマッチするか"""
+        name = path.name
+        return any(pat.fullmatch(name) for pat in self.input_patterns)
 
     def initial_scan(self) -> None:
         """初期スキャン"""
@@ -1121,22 +1126,53 @@ def normalize_output_formats(output_formats: list[str]) -> list[str]:
     return seen
 
 
-def normalize_input_extensions(input_extensions: list[str] | None) -> list[str]:
-    normalized = input_extensions or DEFAULT_INPUT_EXTENSIONS
-    resolved: list[str] = []
-    for extension in normalized:
-        ext = extension.strip().lower()
-        if not ext:
+def normalize_input_patterns(input_patterns: list[str] | None) -> list[re.Pattern]:
+    """変換対象ファイル名のパターン（正規表現）をコンパイルする。
+
+    パターンはファイル名（base name）全体に対して fullmatch する。
+    glob 的な `*` を使ってよい（正規表現の `.*` に自動変換される。点も含む任意文字 0 文字以上）。
+    パターン内の他のドット（拡張子の点など）はリテラルの点として扱う（`\\.` に展開）。
+    例:
+        "*.md"        -> ".*\\.md"       (すべての .md ファイル)
+        "*_marp.md"   -> ".*_marp\\.md"  (_marp.md で終わるファイル)
+        "lecture_*.md"-> "lecture_.*\\.md"
+    通常の正規表現として `.*` や `[0-9]+` 等を直接書けば、そのままその意味で使える。
+    `*` はあくまで glob 記法（任意文字 0 文字以上）として扱う。
+    """
+    normalized = input_patterns or DEFAULT_INPUT_PATTERNS
+    resolved: list[re.Pattern] = []
+    seen: set[str] = set()
+    for pattern in normalized:
+        expr = (pattern or "").strip()
+        if not expr:
             continue
-        if not ext.startswith('.'):
-            ext = f'.{ext}'
-        if ext not in SUPPORTED_INPUT_EXTENSIONS:
-            supported = ', '.join(sorted(SUPPORTED_INPUT_EXTENSIONS))
-            raise ValueError(f"Unsupported input format: {extension}. Supported formats: {supported}")
-        if ext not in resolved:
-            resolved.append(ext)
+        # glob 的な `*` を正規表現の `.*` に変換する。
+        # `*.md` のような `*.` では、`*` の直後のドットはリテラルの点（`\.md` の `.`）
+        # なので、`*` 単体を `.*` に展開し、その直後のドットはエスケープして残す。
+        out: list[str] = []
+        i = 0
+        n = len(expr)
+        while i < n:
+            ch = expr[i]
+            if ch == '*':
+                out.append('.*')
+                i += 1
+            elif ch == '.':
+                out.append('\\.')
+                i += 1
+            else:
+                out.append(ch)
+                i += 1
+        expr = ''.join(out)
+        try:
+            compiled = re.compile(expr)
+        except re.error as e:
+            raise ValueError(f"Invalid input pattern: {pattern!r} ({e})") from e
+        if compiled.pattern not in seen:
+            seen.add(compiled.pattern)
+            resolved.append(compiled)
     if not resolved:
-        raise ValueError("At least one input format must be specified")
+        raise ValueError("At least one input pattern must be specified")
     return resolved
 
 
@@ -1157,13 +1193,13 @@ def resolve_single_output_path(input_path: Path, output_arg: str | None, output_
 
 
 def run_single_file_mode(input_path: Path, output_arg: str | None,
-                         input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
+                         input_patterns: list[re.Pattern], copy_extensions: list[str], header_files: list[str],
                          marp_header_files: list[str], output_formats: list[str], engine: str = 'auto') -> int:
     logger.debug(
-        "Running single file mode: input_path={}, output_arg={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
+        "Running single file mode: input_path={}, output_arg={}, input_patterns={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
         input_path,
         output_arg,
-        input_extensions,
+        [p.pattern for p in input_patterns],
         copy_extensions,
         header_files,
         marp_header_files,
@@ -1175,7 +1211,7 @@ def run_single_file_mode(input_path: Path, output_arg: str | None,
     converter = MarkdownConverter(
         str(input_path.parent),
         str(output_path.parent),
-        input_extensions=input_extensions,
+        input_patterns=[p.pattern for p in input_patterns],
         copy_extensions=copy_extensions,
         header_files=header_files,
         marp_header_files=marp_header_files,
@@ -1187,13 +1223,13 @@ def run_single_file_mode(input_path: Path, output_arg: str | None,
 
 
 def run_watch_mode(root_src: Path, root_dest: Path,
-                   input_extensions: list[str], copy_extensions: list[str], header_files: list[str],
+                   input_patterns: list[re.Pattern], copy_extensions: list[str], header_files: list[str],
                    marp_header_files: list[str], output_formats: list[str], engine: str = 'auto') -> int:
     logger.debug(
-        "Running watch mode: root_src={}, root_dest={}, input_extensions={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
+        "Running watch mode: root_src={}, root_dest={}, input_patterns={}, copy_extensions={}, header_files={}, marp_header_files={}, output_formats={}, engine={}",
         root_src,
         root_dest,
-        input_extensions,
+        [p.pattern for p in input_patterns],
         copy_extensions,
         header_files,
         marp_header_files,
@@ -1210,7 +1246,7 @@ def run_watch_mode(root_src: Path, root_dest: Path,
     converter = MarkdownConverter(
         str(root_src),
         str(root_dest),
-        input_extensions=input_extensions,
+        input_patterns=[p.pattern for p in input_patterns],
         copy_extensions=copy_extensions,
         header_files=header_files,
         marp_header_files=marp_header_files,
@@ -1221,12 +1257,16 @@ def run_watch_mode(root_src: Path, root_dest: Path,
     converter.replicate_folder_structure()
     converter.initial_scan()
 
-    all_extensions = set(converter.input_extensions) | set(converter.copy_extensions)
+    def _is_input_file(p: Path) -> bool:
+        return p.suffix in SUPPORTED_INPUT_EXTENSIONS and converter.matches_input_pattern(p)
+
+    def _is_watched_file(p: Path) -> bool:
+        return _is_input_file(p) or p.suffix in converter.copy_extensions
 
     def _collect_mtimes() -> dict[Path, float]:
         result: dict[Path, float] = {}
         for p in root_src.rglob("*"):
-            if p.is_file() and p.suffix in all_extensions:
+            if p.is_file() and _is_watched_file(p):
                 try:
                     result[p] = p.stat().st_mtime
                 except OSError:
@@ -1246,7 +1286,7 @@ def run_watch_mode(root_src: Path, root_dest: Path,
                 if path not in prev or prev[path] != mtime:
                     logger.info("Detected change: {}", path)
                     # should_convert の10秒閾値チェックを飛ばして即変換
-                    if path.suffix in converter.input_extensions:
+                    if _is_input_file(path):
                         converter.convert_markdown(path)
                     elif path.suffix in converter.copy_extensions:
                         converter.copy_file(path)
@@ -1272,9 +1312,12 @@ def main() -> None:
                             help='Watch a folder and convert changed source files')
     _ = parser.add_argument('--output',
                             help='Output file path for a single file, or destination folder for watch mode')
-    _ = parser.add_argument('--format-input', '--format_input', nargs='+',
-                            default=DEFAULT_INPUT_EXTENSIONS,
-                            help='Input file extensions to convert (default: .md). Supports: .md .html')
+    _ = parser.add_argument('--input-pattern', '--input_pattern', nargs='+',
+                            default=DEFAULT_INPUT_PATTERNS,
+                            help='Regex patterns (or glob-like using *) matched against the input file '
+                                 'name to decide which files to convert (repeatable, default: *.md). '
+                                 '例: --input-pattern "*.md"  すべての変換対象 .md / '
+                                 '--input-pattern "*_marp.md"  末尾が _marp.md のファイルだけ')
     _ = parser.add_argument('--header', '-H', action='append', default=[],
                             help='Header TeX file to pass to pandoc (repeatable)')
     _ = parser.add_argument('--marp-header', action='append', default=[],
@@ -1304,7 +1347,7 @@ def main() -> None:
     logger.debug("CLI arguments: {}", args)
 
     copy_extensions: list[str] = args.copy_extensions
-    input_extensions = normalize_input_extensions(args.format_input)
+    input_patterns = normalize_input_patterns(args.input_pattern)
     header_files = resolve_pandoc_header_files(args.header)
     marp_header_files = resolve_marp_header_files(args.marp_header)
     # format_output のデフォルト値を処理
@@ -1321,7 +1364,7 @@ def main() -> None:
         sys.exit(run_watch_mode(
             root_src,
             root_dest,
-            input_extensions,
+            input_patterns,
             copy_extensions,
             header_files,
             marp_header_files,
@@ -1335,7 +1378,7 @@ def main() -> None:
         sys.exit(run_watch_mode(
             root_src,
             root_dest,
-            input_extensions,
+            input_patterns,
             copy_extensions,
             header_files,
             marp_header_files,
@@ -1349,7 +1392,7 @@ def main() -> None:
         sys.exit(run_watch_mode(
             root_src,
             root_dest,
-            input_extensions,
+            input_patterns,
             copy_extensions,
             header_files,
             marp_header_files,
@@ -1367,7 +1410,7 @@ def main() -> None:
         sys.exit(run_single_file_mode(
             target_path,
             args.output,
-            input_extensions,
+            input_patterns,
             copy_extensions,
             header_files,
             marp_header_files,
@@ -1379,7 +1422,7 @@ def main() -> None:
     sys.exit(run_watch_mode(
         target_path,
         root_dest,
-        input_extensions,
+        input_patterns,
         copy_extensions,
         header_files,
         marp_header_files,
