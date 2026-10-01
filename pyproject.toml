@@ -22,22 +22,55 @@ authors = [
     { name = "hirots-m" },
 ]
 keywords = ["markdown", "pdf", "html", "docx", "converter", "pandoc", "marp", "slidev"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
 
 # -----------------------------------------------------------------------------
-# (2) requirements.txt から移管した依存関係
+# (2) 実行時依存関係
+#
+# ※ pandoc は外部のシステムCLIツールであり、pip パッケージとしては利用しない。
+#    pandoc 本体は別途インストールすること:
+#      macOS   : brew install pandoc
+#      Ubuntu  : sudo apt install pandoc
+#      Windows : choco install pandoc
+#
+# ※ pyinstaller / nuitka は「単一 exe 化」するための開発ツールであり、
+#    実行時には不要なため dependencies から除外した。
+#    必要なら `pip install .[packager]` で追加可能。
 # -----------------------------------------------------------------------------
 dependencies = [
     "watchdog>=3.0.0",
     "pandoc-mermaid-selenium-filter",
-    "pyinstaller",
-    "pandoc",
-    "loguru",
-    "pypandoc",
+    "loguru>=0.7.0",
+    "pypandoc>=1.11.0",
 ]
 
+# -----------------------------------------------------------------------------
+# 任意の追加依存
+# -----------------------------------------------------------------------------
 [project.optional-dependencies]
+# HTML/PDF をブラウザエンジン(Playwright)で変換する場合
 playwright = [
     "playwright>=1.40.0",
+]
+# PyInstaller / Nuitka で単一 exe 化する開発者向け
+packager = [
+    "pyinstaller>=6.0.0",
+    "nuitka>=2.0",
+]
+# 開発/テスト環境
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "build>=1.2.0",
 ]
 
 [project.urls]
@@ -46,11 +79,31 @@ Homepage = "https://github.com/hirots-m/md2pdf.py"
 # -----------------------------------------------------------------------------
 # (1) main 関数から起動する CLI アプリ化
 #
-# 起動方法:
-#   $ pip install .            (または pip install -e . で開発インストール)
+# ★ venv 外・別ターミナルでも素の `md2pdf` が通すための導線 ★
+#
+# [A] 開発（編集しながら動作確認）用 — 推奨
+#   $ python -m venv .venv && source .venv/bin/activate
+#   $ pip install -e .            # 編集内容を即反映
+#   $ md2pdf --help
+#
+# [B] 常時使用（venv に閉じ込めず）— ユーザースコープ
+#   $ pip install --user .
+#   $ md2pdf --help               # PATH の ~/.local/bin 以下が通っていればどこでも実行
+#
+# [C] システム全体にインストール（.exe 相当の“常に使えるコマンド”）
+#   $ pip install .               # 管理者権限が必要な場合は sudo
+#   $ md2pdf --help
+#
+# [D] 単一 exe に固めて配布（Windows .exe / macOS 単体バイナリ）
+#   $ pip install .[packager]
+#   $ pyinstaller md2pdf.spec     # (本リポジトリの .spec を利用)
+#   # → dist/md2pdf (実行可能ファイル、Python 環境不要で実行可)
+#
+# 起動例:
 #   $ md2pdf --help
 #   $ md2pdf ./markdown_files ./pdf_output
 #   $ md2pdf --watch ./source --output ./pdf_output --format-input .md .html
+#   $ md2pdf ./doc.md --format-output=pdf --format-output=html
 #
 # エントリポイント `md2pdf = "md2pdf:main"` は、
 # src/md2pdf.py をモジュール名 `md2pdf` としてインストールし、
