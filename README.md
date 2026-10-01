@@ -86,9 +86,10 @@ brew install plantuml pandoc
 
 | 値         | 動作                                                                                 |
 | ---------- | ------------------------------------------------------------------------------------ |
-| `pdf`      | md → PDF（pandoc/marp/slidev/playwright で変換）                                     |
-| `html`     | md → HTML（playwright 使用時は mermaid.js + highlight.js 入りブラウザ対応 HTML）     |
-| `html_pdf` | md → HTML（mermaid/highlight対応）→ PDF の2段階変換。HTML も出力フォルダに保存される |
+| `pdf`      | md → PDFへ変換（pandoc/marp/slidev/playwright で変換）                                     |
+| `html`     | md → HTMLへ変換（playwright 使用時は mermaid.js + highlight.js 入りブラウザ対応 HTML）     |
+| ~~`html_pdf`~~ | md → HTMLへ変換（mermaid/highlight対応）→ PDF の2段階変換。HTML も出力フォルダに保存される |
+| dox| md → docxへ変換（pandoc/marp/slidev/playwright で変換） |
 
 ### html→PDF
 
@@ -102,12 +103,6 @@ HTML 入力は `pdf` 出力のみをサポートします。
 
 
 ## 必要な環境
-
-### Python依存関係
-
-```bash
-pip install -r requirements.txt
-```
 
 ### 外部ツール
 - **pandoc**: 通常のMarkdownファイルのPDF変換に使用
@@ -129,6 +124,24 @@ pip install -r requirements.txt
   # macOS の例
   open -a "Google Chrome"
   ```
+  
+### Python依存関係
+
+- pipxで簡単実行
+
+```bash
+pipx install md2pdf
+
+# 監視コマンド
+md2pdf --input /Users/hoge/src_lecture --output /Users/hoge/published_lecture --output-from pdf --output-from html
+```
+
+- venvを用意してインストール
+```
+pip install githubのmd2pdf
+```
+
+
 
 ## 使用方法
 
