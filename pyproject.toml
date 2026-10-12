@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "md2pdf"
-version = "0.1.0"
+version = "0.1.1"
 description = "Markdown/HTML converter with folder monitoring (pandoc / marp / slidev / playwright)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -50,6 +50,8 @@ dependencies = [
     "pandoc-mermaid-selenium-filter",
     "loguru>=0.7.0",
     "pypandoc>=1.11.0",
+    # mermaid/plantuml 図の PDF 化・--engine playwright で使用（起動時に必ず確認するため必須依存）
+    "playwright>=1.40.0",
 ]
 
 # -----------------------------------------------------------------------------
@@ -57,9 +59,9 @@ dependencies = [
 # -----------------------------------------------------------------------------
 [project.optional-dependencies]
 # HTML/PDF をブラウザエンジン(Playwright)で変換する場合
-playwright = [
-    "playwright>=1.40.0",
-]
+# playwright = [
+#     "playwright>=1.40.0",
+# ]
 # PyInstaller / Nuitka で単一 exe 化する開発者向け
 packager = [
     "pyinstaller>=6.0.0",
@@ -115,8 +117,8 @@ Homepage = "https://github.com/hirots-m/md2pdf.py"
 # `pip install .` 後に `md2pdf` を実行すると src/md2pdf.py の main() が起動する
 md2pdf = "md2pdf:main"
 
-# 既存の直接起動 `python src/md2pdf.py` と同義の別コマンド (任意)
-md2pdf-py = "md2pdf:main"
+# # 既存の直接起動 `python src/md2pdf.py` と同義の別コマンド (任意)
+# md2pdf-py = "md2pdf:main"
 
 # -----------------------------------------------------------------------------
 # setuptools によるパッケージ配置 (単一ファイル src/md2pdf.py を公開)

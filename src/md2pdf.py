@@ -203,7 +203,7 @@ class MarkdownConverter:
     output_format: str  # 変換中の現在フォーマット（convert_markdown内でセット）
 
     def __init__(self, root_src: str, root_dest: str,
-                 input_patterns: list[str] | None = None,
+                 input_patterns: list[str | re.Pattern] | None = None,
                  copy_extensions: list[str] | None = None,
                  header_files: list[str] | None = None,
                  marp_header_files: list[str] | None = None,
@@ -1126,7 +1126,7 @@ def normalize_output_formats(output_formats: list[str]) -> list[str]:
     return seen
 
 
-def normalize_input_patterns(input_patterns: list[str] | None) -> list[re.Pattern]:
+def normalize_input_patterns(input_patterns: list[str | re.Pattern] | None) -> list[re.Pattern]:
     """変換対象ファイル名のパターン（正規表現）をコンパイルする。
 
     パターンはファイル名（base name）全体に対して fullmatch する。
@@ -1143,6 +1143,12 @@ def normalize_input_patterns(input_patterns: list[str] | None) -> list[re.Patter
     resolved: list[re.Pattern] = []
     seen: set[str] = set()
     for pattern in normalized:
+        # コンパイル済みパターンは変換済みなのでそのまま使う（二重変換防止）
+        if isinstance(pattern, re.Pattern):
+            if pattern.pattern not in seen:
+                seen.add(pattern.pattern)
+                resolved.append(pattern)
+            continue
         expr = (pattern or "").strip()
         if not expr:
             continue
@@ -1211,7 +1217,7 @@ def run_single_file_mode(input_path: Path, output_arg: str | None,
     converter = MarkdownConverter(
         str(input_path.parent),
         str(output_path.parent),
-        input_patterns=[p.pattern for p in input_patterns],
+        input_patterns=input_patterns,
         copy_extensions=copy_extensions,
         header_files=header_files,
         marp_header_files=marp_header_files,
@@ -1246,7 +1252,7 @@ def run_watch_mode(root_src: Path, root_dest: Path,
     converter = MarkdownConverter(
         str(root_src),
         str(root_dest),
-        input_patterns=[p.pattern for p in input_patterns],
+        input_patterns=input_patterns,
         copy_extensions=copy_extensions,
         header_files=header_files,
         marp_header_files=marp_header_files,

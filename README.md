@@ -49,7 +49,7 @@ brew install plantuml pandoc
 
 | CLIパラメータ                        | 内容                                                                                                                                                   |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--input-pattern`, `--input_pattern` | ファイル名を正規表現（または glob 的な `*`）で指定。複数可。default=`*.md`。例: `".md"` ですべての .md、`"*_marp.md"` で _marp.md 末尾のファイルだけ |
+| `--input-pattern`, `--input_pattern` | ファイル名を正規表現（または glob 的な `*`）で指定。複数可。default=`*.md`。例: `".md"` ですべての .md、`"*_marp.md"` で _marp.md 末尾のファイルだけ   |
 | `--engine`                           | 変換エンジンを指定(`auto` / `pandoc` / `playwright` / `marp` / `slidev`)。default=`auto`（mermaid/plantumlブロックがあれば自動的に`playwright`を使用） |
 | `--format-output`, `--format_output` | 出力形式を指定。選択肢: `pdf` / `html` / `docx`。デフォルト: `html`                                                                                    |
 | `--watch`                            | 変換するためフォルダ(サブフォルダ)を監視する                                                                                                           |
@@ -60,7 +60,8 @@ brew install plantuml pandoc
 
 ## 機能
 
-- **自動変換**: 指定フォルダ内の`.md`や`.html`ファイルが更新されると自動的に変換
+- **自動変換**: 指定フォルダ内の`.md`や`.html`ファイルを監視し、更新されると自動的に変換
+  - 監視はwatchdogまたはCloudStorage用にpolling(定期確認)モードで実施
 - **Marp対応**: Marp用のMarkdownファイルは`marp-cli`で変換、それ以外は`pandoc`で変換
 - **HTML入力対応**: HTMLファイルをそのままPDFに変換
 - **フォルダ構造保持**: ソースフォルダの階層構造を保持して変換先フォルダに複製
@@ -84,12 +85,12 @@ brew install plantuml pandoc
 
 ### `--format-output` の選択肢
 
-| 値         | 動作                                                                                 |
-| ---------- | ------------------------------------------------------------------------------------ |
-| `pdf`      | md → PDFへ変換（pandoc/marp/slidev/playwright で変換）                                     |
-| `html`     | md → HTMLへ変換（playwright 使用時は mermaid.js + highlight.js 入りブラウザ対応 HTML）     |
+| 値             | 動作                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `pdf`          | md → PDFへ変換（pandoc/marp/slidev/playwright で変換）                                     |
+| `html`         | md → HTMLへ変換（playwright 使用時は mermaid.js + highlight.js 入りブラウザ対応 HTML）     |
 | ~~`html_pdf`~~ | md → HTMLへ変換（mermaid/highlight対応）→ PDF の2段階変換。HTML も出力フォルダに保存される |
-| dox| md → docxへ変換（pandoc/marp/slidev/playwright で変換） |
+| dox            | md → docxへ変換（pandoc/marp/slidev/playwright で変換）                                    |
 
 ### html→PDF
 
