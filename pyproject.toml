@@ -58,10 +58,13 @@ dependencies = [
 # 任意の追加依存
 # -----------------------------------------------------------------------------
 [project.optional-dependencies]
-# HTML/PDF をブラウザエンジン(Playwright)で変換する場合
-# playwright = [
-#     "playwright>=1.40.0",
-# ]
+# ※ Playwright について
+#   playwright は「実行時に必ず確認するため必須依存」（上の dependencies 参照）です。
+#   ただし pip の依存関係だけではブラウザ本体（headless Chromium）はインストールされません。
+#   ブラウザ本体はインストール後に次で用意します:
+#     $ pip install . && md2pdf-setup     # headless Chromium を自動インストール
+#   (なお `md2pdf` を起動した際も、未インストールなら自動で
+#    `playwright install chromium` が実行されます)
 # PyInstaller / Nuitka で単一 exe 化する開発者向け
 packager = [
     "pyinstaller>=6.0.0",
@@ -116,6 +119,9 @@ Homepage = "https://github.com/hirots-m/md2pdf.py"
 # CLI コマンド名 -> モジュール:関数
 # `pip install .` 後に `md2pdf` を実行すると src/md2pdf.py の main() が起動する
 md2pdf = "md2pdf:main"
+# playwright をインストールした直後に headless Chromium をインストールするコマンド。
+# `pip install . && md2pdf-setup` で「pip パッケージ＋ブラウザ」をまとめて用意できる。
+md2pdf-setup = "md2pdf:main_setup"
 
 # # 既存の直接起動 `python src/md2pdf.py` と同義の別コマンド (任意)
 # md2pdf-py = "md2pdf:main"

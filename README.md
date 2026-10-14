@@ -15,9 +15,16 @@
 
 ```bash
 pip install playwright
-playwright install chromium
+playwright install chromium   # headless Chromium のインストール
 brew install plantuml pandoc
 ```
+
+> `pip install .` でパッケージ導入した場合は、`md2pdf-setup` を実行すると
+> playwright の headless Chromium を自動インストールします。
+>
+> ```bash
+> pip install . && md2pdf-setup
+> ```
 
 # Plan for Development
 

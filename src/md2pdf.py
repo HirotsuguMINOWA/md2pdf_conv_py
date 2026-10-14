@@ -278,45 +278,9 @@ class MarkdownConverter:
         return False
 
     def _check_playwright(self) -> bool:
-        # playwright パッケージ確認・自動インストール
-        try:
-            import playwright  # noqa: F401
-        except ImportError:
-            logger.info("playwright not installed. Installing via pip...")
-            result = subprocess.run(
-                [sys.executable, '-m', 'pip', 'install', 'playwright'],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                logger.error(
-                    f"Failed to install playwright:\n{result.stderr}\n"
-                    "  Fix: pip install playwright"
-                )
-                return False
-            logger.info("playwright installed successfully.")
-
-        # Chromium ブラウザバイナリ確認・自動インストール
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                browser = p.chromium.launch(timeout=10000)
-                browser.close()
-            logger.info("Playwright chromium browser is available.")
-            return True
-        except Exception:
-            logger.info("Playwright chromium not found. Installing via `playwright install chromium`...")
-            result = subprocess.run(
-                [sys.executable, '-m', 'playwright', 'install', 'chromium'],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                logger.error(
-                    f"Failed to install Playwright chromium:\n{result.stderr}\n"
-                    "  Fix: playwright install chromium"
-                )
-                return False
-            logger.info("Playwright chromium installed successfully.")
-            return True
+        # playwright パッケージ・headless Chromium の確認・自動インストール
+        # 実装はモジュールレベルの _ensure_playwright_chromium() に集約している
+        return _ensure_playwright_chromium()
 
     def _check_plantuml_cli(self) -> bool:
         found = shutil.which('plantuml')
@@ -1435,6 +1399,82 @@ def main() -> None:
         output_formats,
         engine,
     ))
+
+
+# -------------------------------------------------------
+# headless Chromium セットアップ
+# -------------------------------------------------------
+def _ensure_playwright_chromium() -> bool:
+    """playwright パッケージと headless Chromium を確認し、無ければ自動インストールする。
+
+    - playwright パッケージが未インストール → `pip install playwright`
+    - headless Chromium が無い            → `playwright install chromium`
+    両方揃えば True、途中で失敗すれば False を返す。
+    """
+    # playwright パッケージ確認・自動インストール
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        logger.info("playwright not installed. Installing via pip...")
+        result = subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', 'playwright'],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            logger.error(
+                f"Failed to install playwright:\n{result.stderr}\n"
+                "  Fix: pip install playwright"
+            )
+            return False
+        logger.info("playwright installed successfully.")
+
+    # Chromium ブラウザバイナリ確認・自動インストール
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(timeout=10000)
+            browser.close()
+        logger.info("Playwright chromium browser is available.")
+        return True
+    except Exception:
+        logger.info("Playwright chromium not found. Installing via `playwright install chromium`...")
+        result = subprocess.run(
+            [sys.executable, '-m', 'playwright', 'install', 'chromium'],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            logger.error(
+                f"Failed to install Playwright chromium:\n{result.stderr}\n"
+                "  Fix: playwright install chromium"
+            )
+            return False
+        logger.info("Playwright chromium installed successfully.")
+        return True
+
+
+def setup_headless_browser() -> int:
+    """playwright の headless Chromium を確認・自動インストールする。
+
+    pip による `playwright` パッケージのインストールだけではブラウザ本体は
+    入らないため、`pip install .` の直後に `md2pdf-setup` を実行すると
+    必要な headless Chromium をまとめて用意できる。
+    """
+    configure_logger(DEFAULT_LOG_LEVEL)
+    logger.info("Setting up headless browser for Playwright...")
+    ok = _ensure_playwright_chromium()
+    if ok:
+        logger.info("Headless Chromium is ready.")
+        return 0
+    logger.error(
+        "Could not install headless Chromium automatically. "
+        "Please run it manually: playwright install chromium"
+    )
+    return 1
+
+
+def main_setup() -> None:
+    """`md2pdf-setup` コマンドのエントリポイント（headless Chromium をインストール）"""
+    sys.exit(setup_headless_browser())
 
 
 if __name__ == "__main__":
