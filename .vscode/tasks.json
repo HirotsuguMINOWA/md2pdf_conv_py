@@ -16,10 +16,10 @@
                 "isDefault": false
             },
             "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            },
+            // "presentation": {
+            //     "reveal": "always",
+            //     "panel": "shared"
+            // },
             "detail": "build_by_nuitka_md2pdf.sh を実行 (Nuitka onefile+standalone ビルド)"
         },
         {
@@ -37,10 +37,10 @@
                 "isDefault": false
             },
             "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            },
+            // "presentation": {
+            //     "reveal": "always",
+            //     "panel": "shared"
+            // },
             "detail": "build_by_pyinstaller_md2pdf.sh を実行 (PyInstaller onefile ビルド)"
         },
         {
@@ -58,10 +58,10 @@
                 "isDefault": false
             },
             "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            },
+            // "presentation": {
+            //     "reveal": "always",
+            //     "panel": "shared"
+            // },
             "detail": "build_by_pyinstaller_chrome_md2pdf.sh を実行 (Chrome版 PyInstaller ビルド)"
         },
         {
@@ -79,11 +79,11 @@
                 "isDefault": false
             },
             "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "clear": true
-            },
+            // "presentation": {
+            //     "reveal": "always",
+            //     "panel": "dedicated",
+            //     "clear": true
+            // },
             "detail": "run_pkg_md2pdf.sh を実行 (dist/md2pdf の watch モード。長期間実行される)"
         }
     ]
